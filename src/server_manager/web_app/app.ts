@@ -34,7 +34,7 @@ interface PolymerEvent extends Event {
 
 // The Outline DigitalOcean team's referral code:
 //   https://www.digitalocean.com/help/referral-program/
-const DIGITALOCEAN_REFERRAL_CODE = '5ddb4219b716';
+const UNUSED_DIGITALOCEAN_REFERRAL_CODE = '5ddb4219b716';
 
 interface UiAccessKey {
   id: string;
@@ -67,7 +67,7 @@ export class App {
   private serverBeingCreated: server.ManagedServer;
 
   constructor(
-      private appRoot: Polymer, private readonly appUrl: string, private readonly version: string,
+      private appRoot: Polymer, private readonly version: string,
       private createDigitalOceanSession: DigitalOceanSessionFactory,
       private createDigitalOceanServerRepository: DigitalOceanServerRepositoryFactory,
       private manualServerRepository: server.ManualServerRepository,
@@ -757,9 +757,8 @@ export class App {
     view.serverHostname = selectedServer.getHostname();
     view.serverManagementApiUrl = selectedServer.getManagementApiUrl();
     view.serverPortForNewAccessKeys = selectedServer.getPortForNewAccessKeys();
-    // TODO(alalama): use actual locale.
     view.serverCreationDate = selectedServer.getCreatedDate().toLocaleString(
-        'en-US', {year: 'numeric', month: 'long', day: 'numeric'});
+        this.appRoot.language, {year: 'numeric', month: 'long', day: 'numeric'});
 
     if (isManagedServer(selectedServer)) {
       view.isServerManaged = true;
@@ -773,7 +772,6 @@ export class App {
     }
 
     view.metricsEnabled = selectedServer.getMetricsEnabled();
-    view.selectedTab = 'connections';
     this.appRoot.showServerView();
     this.showMetricsOptInWhenNeeded(selectedServer, view);
 

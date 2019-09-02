@@ -85,7 +85,7 @@ In order to utilize the Management API, you'll need to know the apiUrl for your 
 You can obtain this information from the "Settings" tab of the server page in the Outline Manager.
 Alternatively, you can check the 'access.txt' file under the '/opt/outline' directory of an Outline server. An example apiUrl is: https://1.2.3.4:1234/3pQ4jf6qSr5WVeMO0XOo4z.
 
-See [Full API Documentation](https://rebilly.github.io/ReDoc/?url=https://raw.githubusercontent.com/Jigsaw-Code/outline-server/master/src/shadowbox/server/api.yml).
+See [Full API Documentation](https://redocly.github.io/redoc/?url=https://raw.githubusercontent.com/Jigsaw-Code/outline-server/master/src/shadowbox/server/api.yml).
 The OpenAPI specification can be found at [api.yml](./api.yml).
 
 ### Examples
@@ -119,15 +119,15 @@ Remove an access key
 curl --insecure -X DELETE $API_URL/access-keys/2
 ```
 
-Set an access key quota
-(e.g. limit outbound data transfer for access key 2 to 1MB over a 24 hour sliding window)
+Set an access key data limit
+(e.g. limit outbound data transfer for access key 2 to 1MB over a 24 hour sliding timeframe)
 ```
-curl -v --insecure -X PUT -H "Content-Type: application/json" -d '{"quota": {"data": {"bytes": 1000}, "window": {"hours": 1}}}' $API_URL/access-keys/2/quota
+curl -v --insecure -X PUT -H "Content-Type: application/json" -d '{"limit": {"data": {"bytes": 1000}, "timeframe": {"hours": 1}}}' $API_URL/access-keys/2/data-limit
 ```
 
-Remove an access key quota
+Remove an access key data limit
 ```
-curl -v --insecure -X DELETE $API_URL/access-keys/2/quota
+curl -v --insecure -X DELETE $API_URL/access-keys/2/data-limit
 ```
 
 ## Testing
