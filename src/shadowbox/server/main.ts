@@ -103,7 +103,7 @@ async function main() {
 
   const nodeMetricsPort = await portProvider.reserveFirstFreePort(prometheusPort + 1);
   exportPrometheusMetrics(prometheus.register, nodeMetricsPort);
-  const nodeMetricsLocation = `localhost:${nodeMetricsPort}`;
+  const nodeMetricsLocation = `127.0.0.1:${nodeMetricsPort}`;
 
   const ssMetricsPort = await portProvider.reserveFirstFreePort(nodeMetricsPort + 1);
   logging.info(`Prometheus is at ${prometheusLocation}`);
@@ -119,7 +119,7 @@ async function main() {
     ]
   };
 
-  const ssMetricsLocation = `localhost:${ssMetricsPort}`;
+  const ssMetricsLocation = `127.0.0.1:${ssMetricsPort}`;
   logging.info(`outline-ss-server metrics is at ${ssMetricsLocation}`);
   prometheusConfigJson.scrape_configs.push(
       {job_name: 'outline-server-ss', static_configs: [{targets: [ssMetricsLocation]}]});
@@ -127,26 +127,32 @@ async function main() {
       new OutlineShadowsocksServer(
           getPersistentFilename('outline-ss-server/config.yml'), verbose, ssMetricsLocation)
           .enableCountryMetrics(MMDB_LOCATION);
-  runPrometheusScraper(
+  const prometheusEndpoint = `http://${prometheusLocation}`;
+  // Wait for Prometheus to be up and running.
+  await runPrometheusScraper(
       [
         '--storage.tsdb.retention', '31d', '--storage.tsdb.path',
         getPersistentFilename('prometheus/data'), '--web.listen-address', prometheusLocation,
         '--log.level', verbose ? 'debug' : 'info'
       ],
-      getPersistentFilename('prometheus/config.yml'), prometheusConfigJson);
+      getPersistentFilename('prometheus/config.yml'), prometheusConfigJson, prometheusEndpoint);
 
-  const prometheusClient = new PrometheusClient(`http://${prometheusLocation}`);
+  const prometheusClient = new PrometheusClient(prometheusEndpoint);
   if (!serverConfig.data().portForNewAccessKeys) {
     serverConfig.data().portForNewAccessKeys = await portProvider.reserveNewPort();
     serverConfig.write();
   }
   const accessKeyRepository = new ServerAccessKeyRepository(
       serverConfig.data().portForNewAccessKeys, proxyHostname, accessKeyConfig, shadowsocksServer,
-      prometheusClient);
+      prometheusClient, serverConfig.data().dataUsageTimeframe);
 
   const metricsReader = new PrometheusUsageMetrics(prometheusClient);
   const toMetricsId = (id: AccessKeyId) => {
-    return accessKeyRepository.getMetricsId(id);
+    try {
+      return accessKeyRepository.getMetricsId(id);
+    } catch (e) {
+      logging.warn(`Failed to get metrics id for access key ${id}: ${e}`);
+    }
   };
   const managerMetrics = new PrometheusManagerMetrics(prometheusClient);
   const metricsCollector = new RestMetricsCollectorClient(metricsCollectorUrl);
