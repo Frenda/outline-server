@@ -120,7 +120,7 @@ curl --insecure -X DELETE $API_URL/access-keys/2
 ```
 
 Set an access key data limit
-(e.g. limit outbound data transfer for access key 2 to 1MB over a 24 hour sliding timeframe)
+(e.g. limit outbound data transfer for access key 2 to 1MB over 30 days)
 ```
 curl -v --insecure -X PUT -H "Content-Type: application/json" -d '{"limit": {"bytes": 1000}}' $API_URL/access-keys/2/data-limit
 ```
@@ -165,7 +165,18 @@ yarn shadowbox_docker_build && docker tag quay.io/outline/shadowbox $USER/shadow
 
 If you need to test an unsigned image (e.g. your dev one):
 ```
-DOCKER_CONTENT_TRUST=0 SHADOWBOX_IMAGE=$USER/shadowbox yarn do shadowbox/integration_test/run
+DOCKER_CONTENT_TRUST=0 SB_IMAGE=$USER/shadowbox yarn do shadowbox/integration_test/run
 ```
 
 You can add tags if you need different versions in different clients.
+
+### Testing Changes to the Server Config
+
+If your change includes new fields in the server config which are needed at server
+start-up time, then you mey need to remove the pre-existing test config:
+
+```
+rm /tmp/outline/persisted-state/shadowbox_server_config.json
+```
+
+This will warn about deleting a write-protected file, which is okay to ignore.  You will then need to hand-edit the JSON string in src/shadowbox/docker/run_action.sh.
