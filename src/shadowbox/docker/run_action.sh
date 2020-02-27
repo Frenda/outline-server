@@ -34,8 +34,9 @@ declare -a docker_bindings=(
   -e SB_API_PREFIX=TestApiPrefix
   -e SB_CERTIFICATE_FILE=${SB_CERTIFICATE_FILE}
   -e SB_PRIVATE_KEY_FILE=${SB_PRIVATE_KEY_FILE}
+  -e SB_METRICS_URL=${SB_METRICS_URL}
 )
 
 echo "Running image ${SB_IMAGE}"
 
-docker run --rm -it --network=host --name shadowbox "${docker_bindings[@]}" ${SB_IMAGE}
+docker run --rm -it --network=host --name shadowbox "${docker_bindings[@]}" ${SB_IMAGE:-outline/shadowbox}

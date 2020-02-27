@@ -34,7 +34,7 @@ import * as server_config from './server_config';
 import {OutlineSharedMetricsPublisher, PrometheusUsageMetrics, RestMetricsCollectorClient, SharedMetricsPublisher} from './shared_metrics';
 
 const DEFAULT_STATE_DIR = '/root/shadowbox/persisted-state';
-const MMDB_LOCATION = '/var/lib/libmaxminddb/GeoLite2-Country.mmdb';
+const MMDB_LOCATION = '/var/lib/libmaxminddb/ip-country.mmdb';
 
 async function exportPrometheusMetrics(registry: prometheus.Registry, port): Promise<http.Server> {
   return new Promise<http.Server>((resolve, _) => {
@@ -67,7 +67,7 @@ async function main() {
 
   // Default to production metrics, as some old Docker images may not have
   // SB_METRICS_URL properly set.
-  const metricsCollectorUrl = process.env.SB_METRICS_URL || 'https://metrics-prod.uproxy.org';
+  const metricsCollectorUrl = process.env.SB_METRICS_URL || 'https://prod.metrics.getoutline.org';
   if (!process.env.SB_METRICS_URL) {
     logging.warn('process.env.SB_METRICS_URL not set, using default');
   }
