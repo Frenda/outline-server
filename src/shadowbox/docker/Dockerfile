@@ -12,14 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# See versions at https://hub.docker.com/_/node/
-FROM node:8.15.0-alpine
+# Newer node images have no valid content trust data.
+# Pin the image node:12.16.3-alpine (linux/amd64) by hash.
+# See versions at https://hub.docker.com/_/node?tab=tags&name=alpine
+
+# Multi-stage build: use a build image to prevent bloating the shadowbox image with dependencies.
+# Run `yarn` and build inside the container to package the right dependencies for the image.
+FROM node@sha256:12b2154fb459fa5f42c54771524609db041e7ef3465935d0ca82940d2d72669d AS build
+
+RUN apk add --no-cache --upgrade bash
+WORKDIR /
+
+# Don't copy node_modules and other things not needed for install.
+COPY package.json yarn.lock ./
+COPY src/shadowbox/package.json src/shadowbox/
+RUN yarn install
+
+# We copy the source code only after yarn install, so that source code changes don't trigger re-installs.
+COPY scripts scripts/
+COPY src src/
+COPY tsconfig.json ./
+RUN ROOT_DIR=/ yarn do shadowbox/server/build
+
+# shadowbox image
+FROM node@sha256:12b2154fb459fa5f42c54771524609db041e7ef3465935d0ca82940d2d72669d
 
 # Versions can be found at https://github.com/Jigsaw-Code/outline-ss-server/releases
-ARG SS_VERSION=1.1.0
+ARG SS_VERSION=1.1.4
 
 # Save metadata on the software versions we are using.
-LABEL shadowbox.node_version=8.15.0
+LABEL shadowbox.node_version=12.16.3
 LABEL shadowbox.outline-ss-server_version="${SS_VERSION}"
 
 ARG GITHUB_RELEASE
@@ -36,16 +58,11 @@ RUN /etc/periodic/weekly/update_mmdb
 
 WORKDIR /root/shadowbox
 
+# Install shadowbox and third party dependencies.
 RUN mkdir bin && curl -SsL https://github.com/Jigsaw-Code/outline-ss-server/releases/download/v${SS_VERSION}/outline-ss-server_${SS_VERSION}_linux_x86_64.tar.gz | tar xz -C bin outline-ss-server
 COPY third_party/prometheus/prometheus ./bin/
 COPY src/shadowbox/package.json .
-COPY yarn.lock .
-# TODO: Replace with plain old "yarn" once the base image is fixed:
-#       https://github.com/nodejs/docker-node/pull/639
-RUN /opt/yarn-v$YARN_VERSION/bin/yarn install --prod
-
-# Install management service
-COPY build/shadowbox/app app/
+COPY --from=build /build/shadowbox/app app
 
 # Create default state directory.
 RUN mkdir -p /root/shadowbox/persisted-state
