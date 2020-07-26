@@ -20,7 +20,6 @@ import * as digitalocean_api from '../cloud/digitalocean_api';
 import * as errors from '../infrastructure/errors';
 import {sleep} from '../infrastructure/sleep';
 import * as server from '../model/server';
-import {Surveys} from '../model/survey';
 
 import {TokenManager} from './digitalocean_oauth';
 import * as digitalocean_server from './digitalocean_server';
@@ -37,8 +36,6 @@ const UNUSED_DIGITALOCEAN_REFERRAL_CODE = '5ddb4219b716';
 const CHANGE_KEYS_PORT_VERSION = '1.0.0';
 const DATA_LIMITS_VERSION = '1.1.0';
 const CHANGE_HOSTNAME_VERSION = '1.2.0';
-// Date by which the data limits feature experiment will be permanently added or removed.
-export const DATA_LIMITS_AVAILABILITY_DATE = new Date('2020-06-02');
 const MAX_ACCESS_KEY_DATA_LIMIT_BYTES = 50 * (10 ** 9);  // 50GB
 
 function dataLimitToDisplayDataAmount(limit: server.DataLimit): DisplayDataAmount|null {
@@ -88,6 +85,13 @@ async function computeDefaultAccessKeyDataLimit(
   }
 }
 
+// Returns whether the user has seen a notification for the updated feature metrics data collection
+// policy.
+function hasSeenFeatureMetricsNotification(): boolean {
+  return !!window.localStorage.getItem('dataLimitsHelpBubble-dismissed') &&
+      !!window.localStorage.getItem('dataLimits-feature-collection-notification');
+}
+
 async function showHelpBubblesOnce(serverView: ServerView) {
   if (!window.localStorage.getItem('addAccessKeyHelpBubble-dismissed')) {
     await serverView.showAddAccessKeyHelpBubble();
@@ -131,7 +135,7 @@ export class App {
       private createDigitalOceanServerRepository: DigitalOceanServerRepositoryFactory,
       private manualServerRepository: server.ManualServerRepository,
       private displayServerRepository: DisplayServerRepository,
-      private digitalOceanTokenManager: TokenManager, private surveys: Surveys) {
+      private digitalOceanTokenManager: TokenManager) {
     appRoot.setAttribute('outline-version', this.version);
 
     appRoot.addEventListener('ConnectToDigitalOcean', (event: CustomEvent) => {
@@ -245,6 +249,10 @@ export class App {
         console.error(`Failed to submit feedback: ${e}`);
         appRoot.showError(appRoot.localize('error-feedback'));
       }
+    });
+
+    appRoot.addEventListener('SetLanguageRequested', (event: CustomEvent) => {
+      this.setAppLanguage(event.detail.languageCode, event.detail.languageDir);
     });
 
     appRoot.addEventListener('ServerRenameRequested', (event: CustomEvent) => {
@@ -834,10 +842,10 @@ export class App {
     view.serverPortForNewAccessKeys = selectedServer.getPortForNewAccessKeys();
     view.serverCreationDate = localizeDate(selectedServer.getCreatedDate(), this.appRoot.language);
     view.serverVersion = selectedServer.getVersion();
-    view.dataLimitsAvailabilityDate =
-        localizeDate(DATA_LIMITS_AVAILABILITY_DATE, this.appRoot.language);
     view.accessKeyDataLimit = dataLimitToDisplayDataAmount(selectedServer.getAccessKeyDataLimit());
     view.isAccessKeyDataLimitEnabled = !!view.accessKeyDataLimit;
+    view.showFeatureMetricsDisclaimer = selectedServer.getMetricsEnabled() &&
+        !selectedServer.getAccessKeyDataLimit() && !hasSeenFeatureMetricsNotification();
 
     const version = this.selectedServer.getVersion();
     if (version) {
@@ -1025,7 +1033,9 @@ export class App {
       this.appRoot.showNotification(this.appRoot.localize('saved'));
       serverView.accessKeyDataLimit = dataLimitToDisplayDataAmount(limit);
       this.refreshTransferStats(this.selectedServer, serverView);
-      this.surveys.presentDataLimitsEnabledSurvey();
+      // Don't display the feature collection disclaimer anymore.
+      serverView.showFeatureMetricsDisclaimer = false;
+      window.localStorage.setItem('dataLimits-feature-collection-notification', 'true');
     } catch (error) {
       console.error(`Failed to set access key data limit: ${error}`);
       this.appRoot.showError(this.appRoot.localize('error-set-data-limit'));
@@ -1041,7 +1051,6 @@ export class App {
       await this.selectedServer.removeAccessKeyDataLimit();
       this.appRoot.showNotification(this.appRoot.localize('saved'));
       this.refreshTransferStats(this.selectedServer, serverView);
-      this.surveys.presentDataLimitsDisabledSurvey();
     } catch (error) {
       console.error(`Failed to remove access key data limit: ${error}`);
       this.appRoot.showError(this.appRoot.localize('error-remove-data-limit'));
@@ -1191,14 +1200,16 @@ export class App {
   }
 
   private async setMetricsEnabled(metricsEnabled: boolean) {
+    const serverView = this.appRoot.getServerView(this.appRoot.selectedServer.id);
     try {
       await this.selectedServer.setMetricsEnabled(metricsEnabled);
       this.appRoot.showNotification(this.appRoot.localize('saved'));
       // Change metricsEnabled property on polymer element to update display.
-      this.appRoot.getServerView(this.appRoot.selectedServer.id).metricsEnabled = metricsEnabled;
+      serverView.metricsEnabled = metricsEnabled;
     } catch (error) {
       console.error(`Failed to set metrics enabled: ${error}`);
       this.appRoot.showError(this.appRoot.localize('error-metrics'));
+      serverView.metricsEnabled = !metricsEnabled;
     }
   }
 
@@ -1230,5 +1241,11 @@ export class App {
       this.appRoot.selectedServer = null;
       this.showCreateServer();
     });
+  }
+
+  private setAppLanguage(languageCode: string, languageDir: string) {
+    this.appRoot.setLanguage(languageCode, languageDir);
+    document.documentElement.setAttribute('dir', languageDir);
+    window.localStorage.setItem('overrideLanguage', languageCode);
   }
 }

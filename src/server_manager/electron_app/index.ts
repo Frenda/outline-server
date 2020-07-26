@@ -99,7 +99,9 @@ function createMainWindow() {
   win.webContents.on('will-navigate', (event: Event, url: string) => {
     handleNavigation(event, url);
   });
-  win.webContents.on('new-window', handleNavigation.bind(this));
+  win.webContents.on('new-window', (event: Event, url: string) => {
+    handleNavigation(event, url);
+  });
   win.webContents.on('did-finish-load', () => {
     loadingWindow.hide();
 
@@ -222,9 +224,9 @@ function main() {
     }
   });
 
-  // Handle cert whitelisting requests from the renderer process.
+  // Handle request to trust the certificate from the renderer process.
   const trustedFingerprints = new Set<string>();
-  ipcMain.on('whitelist-certificate', (event: IpcEvent, fingerprint: string) => {
+  ipcMain.on('trust-certificate', (event: IpcEvent, fingerprint: string) => {
     trustedFingerprints.add(`sha256/${fingerprint}`);
     event.returnValue = true;
   });
