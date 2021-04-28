@@ -13,7 +13,10 @@
 // limitations under the License.
 
 export interface Server {
-  // Get the server's name for display.
+  // Gets a globally unique identifier for this Server.
+  getId(): string;
+
+  // Gets the server's name for display.
   getName(): string;
 
   // Gets the version of the shadowbox binary the server is running
@@ -22,11 +25,11 @@ export interface Server {
   // Updates the server name.
   setName(name: string): Promise<void>;
 
-  // List the access keys for this server, including the admin.
+  // Lists the access keys for this server, including the admin.
   listAccessKeys(): Promise<AccessKey[]>;
 
   // Returns stats for bytes transferred across all access keys of this server.
-  getDataUsage(): Promise<DataUsageByAccessKey>;
+  getDataUsage(): Promise<BytesByAccessKey>;
 
   // Adds a new access key to this server.
   addAccessKey(): Promise<AccessKey>;
@@ -37,14 +40,26 @@ export interface Server {
   // Removes the access key given by id.
   removeAccessKey(accessKeyId: AccessKeyId): Promise<void>;
 
-  // Sets a data transfer limit over a 30 day rolling window for all access keys.
-  setAccessKeyDataLimit(limit: DataLimit): Promise<void>;
+  // Sets a default access key data transfer limit over a 30 day rolling window for all access keys.
+  // This limit is overridden by per-key data limits.  Forces enforcement of all data limits,
+  // including per-key data limits.
+  setDefaultDataLimit(limit: DataLimit): Promise<void>;
 
-  // Returns the access key data transfer limit, or undefined if it has not been set.
-  getAccessKeyDataLimit(): DataLimit|undefined;
+  // Returns the server default access key data transfer limit, or undefined if it has not been set.
+  getDefaultDataLimit(): DataLimit|undefined;
 
-  // Removes the access key data transfer limit.
-  removeAccessKeyDataLimit(): Promise<void>;
+  // Removes the server default data limit.  Per-key data limits are still enforced.  Traffic is
+  // tracked for if the limit is re-enabled.  Forces enforcement of all data limits, including
+  // per-key limits.
+  removeDefaultDataLimit(): Promise<void>;
+
+  // Sets the custom data limit for a specific key. This limit overrides the server default limit
+  // if it exists. Forces enforcement of the chosen key's data limit.
+  setAccessKeyDataLimit(accessKeyId: AccessKeyId, limit: DataLimit): Promise<void>;
+
+  // Removes the custom data limit for a specific key.  The key is still bound by the server default
+  // limit if it exists. Forces enforcement of the chosen key's data limit.
+  removeAccessKeyDataLimit(accessKeyId: AccessKeyId): Promise<void>;
 
   // Returns whether metrics are enabled.
   getMetricsEnabled(): boolean;
@@ -52,8 +67,8 @@ export interface Server {
   // Updates whether metrics are enabled.
   setMetricsEnabled(metricsEnabled: boolean): Promise<void>;
 
-  // Get the server's unique ID, used for metrics reporting.
-  getServerId(): string;
+  // Gets the ID used for metrics reporting.
+  getMetricsId(): string;
 
   // Checks if the server is healthy.
   isHealthy(): Promise<boolean>;
@@ -90,9 +105,7 @@ export interface ManualServer extends Server {
 // "magic" user experience, e.g. DigitalOcean.
 export interface ManagedServer extends Server {
   // Returns a promise that fulfills once installation is complete.
-  // If resetTimeout is true, this will reset the server state and might
-  // wait until the timeout occurs to reconnect to the server.
-  waitOnInstall(resetTimeout: boolean): Promise<void>;
+  waitOnInstall(): Promise<void>;
   // Returns server host object.
   getHost(): ManagedServerHost;
   // Returns true when installation is complete.
@@ -109,11 +122,11 @@ export interface ManagedServerHost {
   getRegionId(): RegionId;
   // Deletes the server - cannot be undone.
   delete(): Promise<void>;
-  // Returns the virtual host ID.
-  getHostId(): string;
 }
 
-export class DataAmount { terabytes: number; }
+export class DataAmount {
+  terabytes: number;
+}
 
 export class MonetaryCost {
   // Value in US dollars.
@@ -121,25 +134,6 @@ export class MonetaryCost {
 }
 
 export type RegionId = string;
-
-// Keys are cityIds like "nyc".  Values are regions like ["nyc1", "nyc3"].
-export type RegionMap = {
-  [cityId: string]: RegionId[]
-};
-
-// Repository of ManagedServer objects.  These servers are created by the server
-// manager on cloud providers where we can provide a "magical" user experience,
-// e.g. DigitalOcean.
-export interface ManagedServerRepository {
-  // Lists all existing Shadowboxes. If `fetchFromHost` is true, performs a network request to
-  // retrieve the servers; otherwise resolves with a cached server list.
-  listServers(fetchFromHost?: boolean): Promise<ManagedServer[]>;
-  // Return a map of regions that are available and support our target machine size.
-  getRegionMap(): Promise<Readonly<RegionMap>>;
-  // Creates a server and returning it when it becomes active (i.e. the server has
-  // created, not necessarily once shadowbox installation has finished).
-  createServer(region: RegionId, name: string): Promise<ManagedServer>;
-}
 
 // Configuration for manual servers.  This is the output emitted from the
 // shadowbox install script, which is needed for the manager connect to
@@ -166,20 +160,10 @@ export interface AccessKey {
   id: AccessKeyId;
   name: string;
   accessUrl: string;
+  dataLimit?: DataLimit;
 }
 
-// Byte transfer stats for the past 30 days, including both inbound and outbound.
-// TODO: this is copied at src/shadowbox/model/metrics.ts.  Both copies should
-// be kept in sync, until we can find a way to share code between the web_app
-// and shadowbox.
-export interface DataUsageByAccessKey {
-  // The accessKeyId should be of type AccessKeyId, however that results in the tsc
-  // error TS1023: An index signature parameter type must be 'string' or 'number'.
-  // See https://github.com/Microsoft/TypeScript/issues/2491
-  // TODO: this still says "UserId", changing to "AccessKeyId" will require
-  // a change on the shadowbox server.
-  bytesTransferredByUserId: {[accessKeyId: string]: number};
-}
+export type BytesByAccessKey = Map<AccessKeyId, number>;
 
 // Data transfer allowance, measured in bytes.
 // NOTE: Must be kept in sync with the definition in src/shadowbox/access_key.ts.

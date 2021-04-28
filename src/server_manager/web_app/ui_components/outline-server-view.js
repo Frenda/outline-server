@@ -29,23 +29,18 @@ import './cloud-install-styles.js';
 import './outline-iconset.js';
 import './outline-help-bubble.js';
 import './outline-metrics-option-dialog.js';
+import './outline-server-progress-step.js';
 import './outline-server-settings.js';
 import './outline-share-dialog.js';
 import './outline-sort-span.js';
 import {html, PolymerElement} from '@polymer/polymer';
 import {DirMixin} from '@polymer/polymer/lib/mixins/dir-mixin.js';
 
+import * as formatting from '../data_formatting';
 
-import * as byte_size from 'byte-size';
+export const MY_CONNECTION_USER_ID = '0';
 
-byte_size.defaultOptions({
-  units: 'metric',
-  toStringFn: function() {
-    return `${this.value} ${this.unit}`;
-  },
-});
-
-const MY_CONNECTION_USER_ID = '0';
+const progressBarMaxWidthPx = 72;
 
 // Makes an CustomEvent that bubbles up beyond the shadow root.
 function makePublicEvent(eventName, detail) {
@@ -66,6 +61,15 @@ function compare(a, b) {
 }
 
 /**
+ * Allows using an optional number as a boolean value without 0 being falsey.
+ * @param {number=} x
+ * @returns {number=} True if x is neither null nor undefined
+ */
+function exists(x) {
+  return (x !== null && x !== undefined);
+}
+
+/**
  * An access key to be displayed
  * @typedef {Object} DisplayAccessKey
  * @prop {string} id
@@ -73,13 +77,8 @@ function compare(a, b) {
  * @prop {string} name
  * @prop {string} accessUrl
  * @prop {number} transferredBytes
- * @prop {number} relativeTraffic
- */
-
-/**
- * @typedef {Object} DisplayDataAmount
- * @prop {'MB'|'GB'} unit
- * @prop {number} value
+ * @prop {number=} dataLimitBytes The data limit assigned to the key if it exists.
+ * @prop {DisplayDataAmount=} dataLimit The data limit assigned to the key if it exists.
  */
 
 export class ServerView extends DirMixin(PolymerElement) {
@@ -90,8 +89,11 @@ export class ServerView extends DirMixin(PolymerElement) {
       .container {
         display: flex;
         flex-direction: column;
-        padding: 24px;
         color: var(--light-gray);
+      }
+      #managementView,
+      #unreachableView {
+        padding: 24px;
       }
       .tabs-container {
         display: flex;
@@ -238,7 +240,7 @@ export class ServerView extends DirMixin(PolymerElement) {
       }
       .measurement-container {
         display: flex;
-        flex: 3;
+        flex: 4;
         align-items: center;
       }
       .measurement-container paper-progress {
@@ -261,7 +263,7 @@ export class ServerView extends DirMixin(PolymerElement) {
       }
       .measurement {
         /* Space the usage bars evenly */
-        min-width: 9ch;
+        width: 19ch;
         /* We don't want numbers separated from their units */
         white-space: nowrap;
         font-size: 14px;
@@ -400,33 +402,41 @@ export class ServerView extends DirMixin(PolymerElement) {
     </style>
 
     <div class="container">
+      <iron-pages id="pages" attr-for-selected="id" selected="[[selectedPage]]" on-changed="_selectedPageChanged">
+        <outline-server-progress-step id="progressView" server-name="[[serverName]]" localize="[[localize]]"></outline-server-progress-step>
+        <div id="unreachableView">${this.unreachableViewTemplate}</div>
+        <div id="managementView">${this.managementViewTemplate}</div>
+      </iron-pages>
+    </div>
+
+    <outline-help-bubble id="getConnectedHelpBubble" vertical-align="bottom" horizontal-align="right">
+      <img src="images/connect-tip-2x.png">
+      <h3>[[localize('server-help-connection-title')]]</h3>
+      <p>[[localize('server-help-connection-description')]]</p>
+      <paper-button on-tap="_closeGetConnectedHelpBubble">[[localize('server-help-connection-ok')]]</paper-button>
+    </outline-help-bubble>
+    <outline-help-bubble id="addAccessKeyHelpBubble" vertical-align="bottom" horizontal-align="left">
+      <img src="images/key-tip-2x.png">
+      <h3>[[localize('server-help-access-key-title')]]</h3>
+      <p>[[localize('server-help-access-key-description')]]</p>
+      <paper-button on-tap="_closeAddAccessKeyHelpBubble">[[localize('server-help-access-key-next')]]</paper-button>
+    </outline-help-bubble>
+    <outline-help-bubble id="dataLimitsHelpBubble" vertical-align="top" horizontal-align="right">
+      <h3>[[localize('data-limits-dialog-title')]]</h3>
+      <p>[[localize('data-limits-dialog-text')]]</p>
+      <paper-button on-tap="_closeDataLimitsHelpBubble">[[localize('ok')]]</paper-button>
+    </outline-help-bubble>
+    `;
+  }
+
+  static get unreachableViewTemplate() {
+    return html`
       <div class="server-header">
         <div class="server-name">
           <h3>[[serverName]]</h3>
-          <paper-menu-button horizontal-align="right" class="overflow-menu flex-1" hidden\$="{{!isServerReachable}}" close-on-activate="" no-animations="" dynamic-align="" no-overlap="">
-            <paper-icon-button icon="more-vert" slot="dropdown-trigger"></paper-icon-button>
-            <paper-listbox slot="dropdown-content">
-              <paper-item hidden\$="[[!isServerManaged]]" on-tap="destroyServer">
-                <iron-icon icon="icons:remove-circle-outline"></iron-icon>[[localize('server-destroy')]]
-              </paper-item>
-              <paper-item hidden\$="[[isServerManaged]]" on-tap="removeServer">
-                <iron-icon icon="icons:remove-circle-outline"></iron-icon>[[localize('server-remove')]]
-              </paper-item>
-            </paper-listbox>
-          </paper-menu-button>
         </div>
-        <div class="server-location" hidden\$="{{!isServerReachable}}">[[serverLocation]]</div>
       </div>
-      <div class="tabs-container" hidden\$="{{!isServerReachable}}">
-        <div class="tabs-spacer"></div>
-        <paper-tabs selected="{{selectedTab}}" attr-for-selected="name" noink="">
-          <paper-tab name="connections">[[localize('server-connections')]]</paper-tab>
-          <paper-tab name="settings" id="settingsTab">[[localize('server-settings')]]</paper-tab>
-        </paper-tabs>
-      </div>
-
-      <!-- Unreachable server display -->
-      <div class="card-section unreachable-server" hidden\$="{{isServerReachable}}">
+      <div class="card-section unreachable-server">
         <img class="server-img" src="images/server-unreachable.png">
         <h3>[[localize('server-unreachable')]]</h3>
         <p></p>
@@ -438,16 +448,43 @@ export class ServerView extends DirMixin(PolymerElement) {
           <paper-button on-tap="destroyServer" hidden\$="{{!isServerManaged}}">[[localize('server-destroy')]]</paper-button>
           <paper-button on-tap="retryDisplayingServer" class="try-again-btn">[[localize('retry')]]</paper-button>
         </div>
-      </div>
+      </div>`;
+  }
 
-      <iron-pages selected="{{selectedTab}}" attr-for-selected="name" hidden\$="{{!isServerReachable}}">
+  static get managementViewTemplate() {
+    return html`
+      <div class="server-header">
+        <div class="server-name">
+          <h3>[[serverName]]</h3>
+          <paper-menu-button horizontal-align="right" class="overflow-menu flex-1" close-on-activate="" no-animations="" dynamic-align="" no-overlap="">
+            <paper-icon-button icon="more-vert" slot="dropdown-trigger"></paper-icon-button>
+            <paper-listbox slot="dropdown-content">
+              <paper-item hidden\$="[[!isServerManaged]]" on-tap="destroyServer">
+                <iron-icon icon="icons:remove-circle-outline"></iron-icon>[[localize('server-destroy')]]
+              </paper-item>
+              <paper-item hidden\$="[[isServerManaged]]" on-tap="removeServer">
+                <iron-icon icon="icons:remove-circle-outline"></iron-icon>[[localize('server-remove')]]
+              </paper-item>
+            </paper-listbox>
+          </paper-menu-button>
+        </div>
+        <div class="server-location">[[_formatLocation(serverLocationId, language)]]</div>
+      </div>
+      <div class="tabs-container">
+        <div class="tabs-spacer"></div>
+        <paper-tabs selected="{{selectedTab}}" attr-for-selected="name" noink="">
+          <paper-tab name="connections">[[localize('server-connections')]]</paper-tab>
+          <paper-tab name="settings" id="settingsTab">[[localize('server-settings')]]</paper-tab>
+        </paper-tabs>
+      </div>
+      <iron-pages selected="[[selectedTab]]" attr-for-selected="name" on-selected-changed="_selectedTabChanged">
         <div name="connections">
           <div class="stats-container">
             <div class="stats-card transfer-stats card-section">
               <iron-icon icon="icons:swap-horiz"></iron-icon>
               <div class="stats">
-                <h3>[[_getFormattedTransferredValue(totalInboundBytes, '0')]]</h3>
-                <p>[[_getFormattedTransferredUnit(totalInboundBytes, 'B')]]</p>
+                <h3>[[_formatInboundBytesValue(totalInboundBytes, language)]]</h3>
+                <p>[[_formatInboundBytesUnit(totalInboundBytes, language)]]</p>
               </div>
               <p>[[localize('server-data-transfer')]]</p>
             </div>
@@ -456,8 +493,8 @@ export class ServerView extends DirMixin(PolymerElement) {
                 <img class="digital-ocean-icon" src="images/do_white_logo.svg">
               </div>
               <div class="stats">
-                <h3>[[managedServerUtilzationPercentage]]</h3>
-                <p>/[[_formatBytesTransferred(monthlyOutboundTransferBytes)]]</p>
+                <h3>[[_computeManagedServerUtilzationPercentage(totalInboundBytes, monthlyOutboundTransferBytes)]]</h3>
+                <p>/[[_formatBytesTransferred(monthlyOutboundTransferBytes, language)]]</p>
               </div>
               <p>[[localize('server-data-used')]]</p>
             </div>
@@ -496,17 +533,23 @@ export class ServerView extends DirMixin(PolymerElement) {
                 </div>
               </span>
               <span class="measurement-container">
-                <span class="measurement">[[_formatBytesTransferred(myConnection.transferredBytes, "...")]]</span>
-                <paper-progress value="[[myConnection.relativeTraffic]]" class\$="[[_computePaperProgressClass(isAccessKeyDataLimitEnabled)]]"></paper-progress>
-                <paper-tooltip animation-delay="0" offset="0" position="top" hidden\$="[[!isAccessKeyDataLimitEnabled]]">
-                  [[_getDataLimitsUsageString(myConnection)]]
+                <span class="measurement">
+                    <bdi>[[_formatBytesTransferred(myConnection.transferredBytes, language, "...")]]</bdi>
+                    /
+                    <bdi>[[_formatDataLimitForKey(myConnection, language)]]</bdi>
+                  </span>
+                <paper-progress max="[[_getRelevantTransferAmountForKey(myConnection)]]" value="[[myConnection.transferredBytes]]" class\$="[[_computePaperProgressClass(myConnection)]]" style\$="[[_computeProgressWidthStyling(myConnection, baselineDataTransfer)]]"></paper-progress>
+                <paper-tooltip animation-delay="0" offset="0" position="top" hidden\$="[[!_activeDataLimitForKey(myConnection)]]">
+                  [[_getDataLimitsUsageString(myConnection, language)]]
                 </paper-tooltip>
               </span>
               <span class="actions">
                 <span class="flex-1">
                   <paper-icon-button icon="outline-iconset:devices" class="connect-button" on-tap="_handleConnectPressed"></paper-icon-button>
                 </span>
-                <span class="overflow-menu flex-1"></span>
+                <span class="flex-1">
+                  <paper-icon-button icon="icons:perm-data-setting" hidden\$="[[!hasPerKeyDataLimitDialog]]" on-tap="_handleShowPerKeyDataLimitDialogPressed"></paper-icon-button>
+                </span>
               </span>
             </div>
             <div id="accessKeysContainer">
@@ -519,10 +562,14 @@ export class ServerView extends DirMixin(PolymerElement) {
                     <input type="text" class="access-key-name" id\$="access-key-[[item.id]]" placeholder="{{item.placeholderName}}" value="[[item.name]]" on-blur="_handleNameInputBlur" on-keydown="_handleNameInputKeyDown">
                   </span>
                   <span class="measurement-container">
-                    <span class="measurement">[[_formatBytesTransferred(item.transferredBytes, "...")]]</span>
-                    <paper-progress value="[[item.relativeTraffic]]" class\$="[[_computePaperProgressClass(isAccessKeyDataLimitEnabled)]]"></paper-progress>
-                    <paper-tooltip animation-delay="0" offset="0" position="top" hidden\$="[[!isAccessKeyDataLimitEnabled]]">
-                      [[_getDataLimitsUsageString(item)]]
+                    <span class="measurement">
+                      <bdi>[[_formatBytesTransferred(item.transferredBytes, language, "...")]]</bdi>
+                      /
+                      <bdi>[[_formatDataLimitForKey(item, language)]]</bdi>
+                    </span>
+                    <paper-progress max="[[_getRelevantTransferAmountForKey(item)]]" value="[[item.transferredBytes]]" class\$="[[_computePaperProgressClass(item)]]" style\$="[[_computeProgressWidthStyling(item, baselineDataTransfer)]]"></paper-progress>
+                    <paper-tooltip animation-delay="0" offset="0" position="top" hidden\$="[[!_activeDataLimitForKey(item)]]">
+                      [[_getDataLimitsUsageString(item, language)]]
                     </paper-tooltip>
                   </span>
                   <span class="actions">
@@ -538,6 +585,9 @@ export class ServerView extends DirMixin(PolymerElement) {
                           </paper-item>
                           <paper-item on-tap="_handleRemoveAccessKeyPressed">
                             <iron-icon icon="icons:delete"></iron-icon>[[localize('remove')]]
+                          </paper-item>
+                          <paper-item hidden\$="[[!hasPerKeyDataLimitDialog]]" on-tap="_handleShowPerKeyDataLimitDialogPressed">
+                            <iron-icon icon="icons:perm-data-setting"></iron-icon>[[localize('data-limit')]]
                           </paper-item>
                         </paper-listbox>
                       </paper-menu-button>
@@ -556,31 +606,11 @@ export class ServerView extends DirMixin(PolymerElement) {
           </div>
         </div>
         <div name="settings">
-          <outline-server-settings id="serverSettings" server-id="[[serverId]]" server-hostname="[[serverHostname]]" server-name="[[serverName]]" server-version="[[serverVersion]]" is-hostname-editable="[[isHostnameEditable]]" server-management-api-url="[[serverManagementApiUrl]]" server-port-for-new-access-keys="[[serverPortForNewAccessKeys]]" is-access-key-port-editable="[[isAccessKeyPortEditable]]" access-key-data-limit="{{accessKeyDataLimit}}" is-access-key-data-limit-enabled="{{isAccessKeyDataLimitEnabled}}" supports-access-key-data-limit="[[supportsAccessKeyDataLimit]]" show-feature-metrics-disclaimer="[[showFeatureMetricsDisclaimer]]" server-creation-date="[[serverCreationDate]]" server-monthly-cost="[[monthlyCost]]" server-monthly-transfer-limit="[[_formatBytesTransferred(monthlyOutboundTransferBytes)]]" is-server-managed="[[isServerManaged]]" server-location="[[serverLocation]]" metrics-enabled="[[metricsEnabled]]" localize="[[localize]]">
+          <outline-server-settings id="serverSettings" metrics-id="[[metricsId]]" server-hostname="[[serverHostname]]" server-name="[[serverName]]" server-version="[[serverVersion]]" is-hostname-editable="[[isHostnameEditable]]" server-management-api-url="[[serverManagementApiUrl]]" server-port-for-new-access-keys="[[serverPortForNewAccessKeys]]" is-access-key-port-editable="[[isAccessKeyPortEditable]]" default-data-limit="[[_computeDisplayDataLimit(defaultDataLimitBytes)]]" is-default-data-limit-enabled="{{isDefaultDataLimitEnabled}}" supports-default-data-limit="[[supportsDefaultDataLimit]]" show-feature-metrics-disclaimer="[[showFeatureMetricsDisclaimer]]" server-creation-date="[[serverCreationDate]]" server-monthly-cost="[[monthlyCost]]" server-monthly-transfer-limit="[[_formatBytesTransferred(monthlyOutboundTransferBytes, language)]]" is-server-managed="[[isServerManaged]]" server-location="[[serverLocation]]" metrics-enabled="[[metricsEnabled]]" language="[[language]]" localize="[[localize]]">
           </outline-server-settings>
         </div>
-      </iron-pages>
-    </div>
-
-    <outline-help-bubble id="getConnectedHelpBubble" vertical-align="bottom" horizontal-align="right">
-      <img src="images/connect-tip-2x.png">
-      <h3>[[localize('server-help-connection-title')]]</h3>
-      <p>[[localize('server-help-connection-description')]]</p>
-      <paper-button on-tap="closeGetConnectedHelpBubble">[[localize('server-help-connection-ok')]]</paper-button>
-    </outline-help-bubble>
-    <outline-help-bubble id="addAccessKeyHelpBubble" vertical-align="bottom" horizontal-align="left">
-      <img src="images/key-tip-2x.png">
-      <h3>[[localize('server-help-access-key-title')]]</h3>
-      <p>[[localize('server-help-access-key-description')]]</p>
-      <paper-button on-tap="closeAddAccessKeyHelpBubble">[[localize('server-help-access-key-next')]]</paper-button>
-    </outline-help-bubble>
-    <outline-help-bubble id="dataLimitsHelpBubble" vertical-align="top" horizontal-align="right">
-      <h3>[[localize('data-limits-dialog-title')]]</h3>
-      <p>[[localize('data-limits-dialog-text')]]</p>
-      <paper-button on-tap="closeDataLimitsHelpBubble">[[localize('ok')]]</paper-button>
-    </outline-help-bubble>
-    `;
-    }
+      </iron-pages>`;
+  }
 
     static get is() {
       return 'outline-server-view';
@@ -588,39 +618,38 @@ export class ServerView extends DirMixin(PolymerElement) {
 
     static get properties() {
       return {
+        metricsId: String,
         serverId: String,
         serverName: String,
         serverHostname: String,
         serverVersion: String,
-        isHostnameEditable: {type: Boolean},
+        isHostnameEditable: Boolean,
         serverManagementApiUrl: String,
         serverPortForNewAccessKeys: Number,
-        isAccessKeyPortEditable: {type: Boolean},
-        serverCreationDate: String,
+        isAccessKeyPortEditable: Boolean,
+        serverCreationDate: Date,
         serverLocation: String,
-        accessKeyDataLimit: {type: Object},
-        isAccessKeyDataLimitEnabled: {type: Boolean},
-        supportsAccessKeyDataLimit: {type: Boolean},
-        showFeatureMetricsDisclaimer: {type: Boolean},
+        defaultDataLimitBytes: Number,
+        isDefaultDataLimitEnabled: Boolean,
+        supportsDefaultDataLimit: Boolean,
+        showFeatureMetricsDisclaimer: Boolean,
         isServerManaged: Boolean,
         isServerReachable: Boolean,
         retryDisplayingServer: Function,
         myConnection: Object,
         totalInboundBytes: Number,
-        accessKeyRows: {type: Array},
+        baselineDataTransfer: Number,
+        accessKeyRows: Array,
         hasNonAdminAccessKeys: Boolean,
         metricsEnabled: Boolean,
-        monthlyOutboundTransferBytes: {type: Number},
-        monthlyCost: {type: Number},
-        selectedTab: {type: String},
-        managedServerUtilzationPercentage: {
-          type: Number,
-          computed:
-              '_computeManagedServerUtilzationPercentage(totalInboundBytes, monthlyOutboundTransferBytes)',
-        },
-        accessKeySortBy: {type: String},
-        accessKeySortDirection: {type: Number},
-        localize: {type: Function, readonly: true},
+        monthlyOutboundTransferBytes: Number,
+        monthlyCost: Number,
+        accessKeySortBy: String,
+        accessKeySortDirection: Number,
+        language: String,
+        localize: Function,
+        selectedPage: String,
+        selectedTab: String,
       };
     }
 
@@ -628,13 +657,13 @@ export class ServerView extends DirMixin(PolymerElement) {
       return [
         '_accessKeysAddedOrRemoved(accessKeyRows.splices)',
         '_myConnectionChanged(myConnection)',
-        '_selectedTabChanged(selectedTab)',
       ];
     }
 
     constructor() {
       super();
       this.serverId = '';
+      this.metricsId = '';
       this.serverName = '';
       this.serverHostname = '';
       this.serverVersion = '';
@@ -643,13 +672,14 @@ export class ServerView extends DirMixin(PolymerElement) {
       /** @type {number} */
       this.serverPortForNewAccessKeys = null;
       this.isAccessKeyPortEditable = false;
-      this.serverCreationDate = '';
-      this.serverLocation = '';
-      /** @type {DisplayDataAmount} */
-      this.accessKeyDataLimit = null;
-      this.isAccessKeyDataLimitEnabled = false;
-      /** Whether the server supports data limits. */
-      this.supportsAccessKeyDataLimit = false;
+      this.serverCreationDate = new Date(0);
+      this.serverLocationId = '';
+      /** @type {number} */
+      this.defaultDataLimitBytes = null;
+      this.isDefaultDataLimitEnabled = false;
+      this.hasPerKeyDataLimitDialog = false;
+      /** Whether the server supports default data limits. */
+      this.supportsDefaultDataLimit = false;
       this.showFeatureMetricsDisclaimer = false;
       this.isServerManaged = false;
       this.isServerReachable = false;
@@ -661,10 +691,17 @@ export class ServerView extends DirMixin(PolymerElement) {
       /**
        *  myConnection has the same fields as each item in accessKeyRows.  It may
        *  be unset in some old versions of Outline that allowed deleting this row
-       *  @type {DisplayAccessKey}
+       *
+       * TODO(JonathanDCohen) Refactor out special casing for myConnection.  It exists as a separate
+       * item in the view even though it's also in accessKeyRows.  We can have the special casing
+       * be in display only, so we can just use accessKeyRows[0] and not have extra logic when it's
+       * not needed.
+       * @type {DisplayAccessKey}
        */
       this.myConnection = null;
       this.totalInboundBytes = 0;
+      /** The number to which access key transfer amounts are compared for progress bar display */
+      this.baselineDataTransfer = Number.POSITIVE_INFINITY;
       /** @type {DisplayAccessKey[]} */
       this.accessKeyRows = [];
       this.hasNonAdminAccessKeys = false;
@@ -677,15 +714,18 @@ export class ServerView extends DirMixin(PolymerElement) {
       //   https://www.polymer-project.org/1.0/docs/devguide/data-binding.html
       this.monthlyOutboundTransferBytes = 0;
       this.monthlyCost = 0;
-      this.selectedTab = 'connections';
       this.accessKeySortBy = 'name';
       /**
        * The direction to sort: 1 == ascending, -1 == descending
        * @type {-1|1}
        */
       this.accessKeySortDirection = 1;
+      this.language = 'en';
       /** @type {(msgId: string, ...params: string[]) => string} */
       this.localize = null;
+      /** @type {'progressView'|'unreachableView'|'managementView'} */
+      this.selectedPage = 'managementView';
+      this.selectedTab = 'connections';
     }
 
     /**
@@ -708,6 +748,59 @@ export class ServerView extends DirMixin(PolymerElement) {
         return;
       }
     }
+  }
+
+  updateAccessKeyRow(accessKeyId, fields) {
+    let newAccessKeyRow;
+    if (accessKeyId === MY_CONNECTION_USER_ID) {
+      newAccessKeyRow = Object.assign({}, this.get('myConnection'), fields);
+      this.set('myConnection', newAccessKeyRow);
+    }
+    for (let accessKeyRowIndex in this.accessKeyRows) {
+      if (this.accessKeyRows[accessKeyRowIndex].id === accessKeyId) {
+        newAccessKeyRow = Object.assign({}, this.get(['accessKeyRows', accessKeyRowIndex]), fields);
+        this.set(['accessKeyRows', accessKeyRowIndex], newAccessKeyRow);
+        return;
+      }
+    }
+  }
+
+  // Help bubbles should be shown after this outline-server-view
+  // is on the screen (e.g. selected in iron-pages). If help bubbles
+  // are initialized before this point, setPosition will not work and
+  // they will appear in the top left of the view.
+  showGetConnectedHelpBubble() {
+    return this._showHelpBubble('getConnectedHelpBubble', 'managerRow');
+  }
+
+  showAddAccessKeyHelpBubble() {
+    return this._showHelpBubble('addAccessKeyHelpBubble', 'addAccessKeyRow', 'down', 'left');
+  }
+
+  showDataLimitsHelpBubble() {
+    return this._showHelpBubble('dataLimitsHelpBubble', 'settingsTab', 'up', 'right');
+  }
+
+  /**
+   * Returns the UI access key with the given ID.
+   * @param {server.accessKeyId} id The id of the key to find
+   * @returns {DisplayAccessKey} The displayed UI key with the given id.
+   */
+  findUiKey(id) {
+    return id === MY_CONNECTION_USER_ID ? this.myConnection :
+                                          this.accessKeyRows.find(key => key.id === id);
+  }
+
+  _closeAddAccessKeyHelpBubble() {
+    this.$.addAccessKeyHelpBubble.hide();
+  }
+
+  _closeGetConnectedHelpBubble() {
+    this.$.getConnectedHelpBubble.hide();
+  }
+
+  _closeDataLimitsHelpBubble() {
+    this.$.dataLimitsHelpBubble.hide();
   }
 
   _handleAddAccessKeyPressed() {
@@ -756,6 +849,21 @@ export class ServerView extends DirMixin(PolymerElement) {
     }));
   }
 
+  _handleShowPerKeyDataLimitDialogPressed(event) {
+    // TODO(cohenjon) change to optional chaining when we upgrade to Electron > >= 8
+    const accessKey = (event.model && event.model.item) || this.myConnection;
+    const keyId = accessKey.id;
+    const keyDataLimitBytes = accessKey.dataLimitBytes;
+    const keyName = accessKey === this.myConnection ? this.localize('server-my-access-key') :
+                                                      accessKey.name || accessKey.placeholderName;
+    const defaultDataLimitBytes =
+        this.isDefaultDataLimitEnabled ? this.defaultDataLimitBytes : undefined;
+    const serverId = this.serverId;
+    this.dispatchEvent(makePublicEvent(
+        'OpenPerKeyDataLimitDialogRequested',
+        {keyId, keyDataLimitBytes, keyName, serverId, defaultDataLimitBytes}));
+  }
+
   _handleRenameAccessKeyPressed(event) {
     const input = this.$.accessKeysContainer.querySelectorAll(
         '.access-key-row .access-key-container > input')[event.model.index];
@@ -782,62 +890,54 @@ export class ServerView extends DirMixin(PolymerElement) {
     this.dispatchEvent(makePublicEvent('RemoveAccessKeyRequested', {accessKeyId: accessKey.id}));
   }
 
-  setServerTransferredData(totalBytes) {
-    this.totalInboundBytes = totalBytes;
+  _formatDataLimitForKey(key, language) {
+    return this._formatDisplayDataLimit(this._activeDataLimitForKey(key), language)
   }
 
-  updateAccessKeyRow(accessKeyId, fields) {
-    let newAccessKeyRow;
-    if (accessKeyId === MY_CONNECTION_USER_ID) {
-      newAccessKeyRow = Object.assign({}, this.get('myConnection'), fields);
-      this.set('myConnection', newAccessKeyRow);
-    }
-    for (let ui in this.accessKeyRows) {
-      if (this.accessKeyRows[ui].id === accessKeyId) {
-        newAccessKeyRow = Object.assign({}, this.get(['accessKeyRows', ui]), fields);
-        this.set(['accessKeyRows', ui], newAccessKeyRow);
-        return;
-      }
-    }
+  _computeDisplayDataLimit(/** @param {number=} */ limit) {
+    return formatting.bytesToDisplayDataAmount(limit);
   }
 
-  _formatBytesTransferred(numBytes, emptyValue = '') {
+  /**
+   * @param {number=} limit The data limit in bytes
+   * @param {string} language The 2-letter ISO language code to format for.
+   */
+  _formatDisplayDataLimit(limit, language) {
+    return exists(limit) ? formatting.formatBytes(limit, language) : this.localize('no-data-limit');
+  }
+
+  _formatInboundBytesUnit(totalBytes, language) {
+    // This happens during app startup before we set the language
+    if (!language) {
+      return '';
+    }
+    return formatting.formatBytesParts(totalBytes, language).unit;
+  }
+
+  _formatInboundBytesValue(totalBytes, language) {
+    // This happens during app startup before we set the language
+    if (!language) {
+      return '';
+    }
+    return formatting.formatBytesParts(totalBytes, language).value;
+  }
+
+  _formatBytesTransferred(numBytes, language, emptyValue = '') {
     if (!numBytes) {
       // numBytes may not be set for manual servers, or may be 0 for
       // unused access keys.
       return emptyValue;
     }
-
-    // Show 0 decimals for < 1MB, 1 decimal for >= 1MB, 2 decimals for >= 1GB.
-    let numDecimals = 0;
-    if (numBytes >= 10 ** 9) {
-      numDecimals = 2;
-    } else if (numBytes >= 10 ** 6) {
-      numDecimals = 1;
-    }
-
-    return byte_size(numBytes, {precision: numDecimals}).toString();
+    return formatting.formatBytes(numBytes, language);
   }
 
-  _getFormattedTransferredUnit(numBytes, emptyValue = '') {
-    const formattedTransfer = this._formatBytesTransferred(numBytes);
-    if (!formattedTransfer) {
-      return emptyValue;
+  _formatMonthlyCost(monthlyCost, language) {
+    if (!monthlyCost) {
+      return '';
     }
-    const units = formattedTransfer.match(/[a-zA-Z%]+/g);
-    if (!units || units.length < 0) {
-      return emptyValue;
-    }
-    return units.pop();
-  }
-
-  _getFormattedTransferredValue(numBytes, emptyValue = '') {
-    const formattedTransfer = this._formatBytesTransferred(numBytes);
-    if (!formattedTransfer) {
-      return emptyValue;
-    }
-    const value = parseFloat(formattedTransfer);
-    return !!value ? value : emptyValue;
+    return new Intl
+        .NumberFormat(language, {style: 'currency', currency: 'USD', currencyDisplay: 'code'})
+        .format(monthlyCost);
   }
 
   _computeManagedServerUtilzationPercentage(numBytes, monthlyLimitBytes) {
@@ -870,41 +970,21 @@ export class ServerView extends DirMixin(PolymerElement) {
     }
   }
 
-  _selectedTabChanged(selectedTab) {
-    if (this.selectedTab === 'settings') {
-      this.closeAddAccessKeyHelpBubble();
-      this.closeGetConnectedHelpBubble();
-      this.closeDataLimitsHelpBubble();
-      this.$.serverSettings.setServerName(this.serverName);
+  _selectedPageChanged() {
+    if (this.selectedPage === 'progressView') {
+      this.$.progressView.startAnimation();
+    } else {
+      this.$.progressView.stopAnimation();
     }
   }
 
-  // Help bubbles should be shown after this outline-server-view
-  // is on the screen (e.g. selected in iron-pages). If help bubbles
-  // are initialized before this point, setPosition will not work and
-  // they will appear in the top left of the view.
-  showGetConnectedHelpBubble() {
-    return this._showHelpBubble('getConnectedHelpBubble', 'managerRow');
-  }
-
-  showAddAccessKeyHelpBubble() {
-    return this._showHelpBubble('addAccessKeyHelpBubble', 'addAccessKeyRow', 'down', 'left');
-  }
-
-  showDataLimitsHelpBubble() {
-    return this._showHelpBubble('dataLimitsHelpBubble', 'settingsTab', 'up', 'right');
-  }
-
-  closeAddAccessKeyHelpBubble() {
-    this.$.addAccessKeyHelpBubble.hide();
-  }
-
-  closeGetConnectedHelpBubble() {
-    this.$.getConnectedHelpBubble.hide();
-  }
-
-  closeDataLimitsHelpBubble() {
-    this.$.dataLimitsHelpBubble.hide();
+  _selectedTabChanged() {
+    if (this.selectedTab === 'settings') {
+      this._closeAddAccessKeyHelpBubble();
+      this._closeGetConnectedHelpBubble();
+      this._closeDataLimitsHelpBubble();
+      this.$.serverSettings.setServerName(this.serverName);
+    }
   }
 
   _showHelpBubble(
@@ -958,24 +1038,70 @@ export class ServerView extends DirMixin(PolymerElement) {
   }
 
   destroyServer() {
-    this.dispatchEvent(makePublicEvent('DeleteServerRequested'));
+    this.dispatchEvent(makePublicEvent('DeleteServerRequested', {serverId: this.serverId}));
   }
 
   removeServer() {
-    this.dispatchEvent(makePublicEvent('ForgetServerRequested'));
+    this.dispatchEvent(makePublicEvent('ForgetServerRequested', {serverId: this.serverId}));
   }
 
-  _computePaperProgressClass(isAccessKeyDataLimitEnabled) {
-    return isAccessKeyDataLimitEnabled ? 'data-limits' : '';
+  /**
+   * @param {DisplayAccessKey=} accessKey
+   * @returns {number=}
+   */
+  _activeDataLimitForKey(accessKey) {
+    if (!accessKey) {
+      // We're in app startup
+      return null;
+    }
+
+    if (exists(accessKey.dataLimitBytes)) {
+      return accessKey.dataLimitBytes;
+    }
+
+    return this.isDefaultDataLimitEnabled ? this.defaultDataLimitBytes : null;
   }
 
-  _getDataLimitsUsageString(accessKey) {
-    if (!this.accessKeyDataLimit) {
+  _computePaperProgressClass(accessKey) {
+    return exists(this._activeDataLimitForKey(accessKey)) ? 'data-limits' : '';
+  }
+
+  _getRelevantTransferAmountForKey(/** @type{DisplayAccessKey} */ accessKey) {
+    if (!accessKey) {
+      // We're in app startup
+      return null;
+    }
+    const activeLimit = this._activeDataLimitForKey(accessKey);
+    return exists(activeLimit) ? activeLimit : accessKey.transferredBytes;
+  }
+
+  _computeProgressWidthStyling(
+      /** @type {DisplayAccessKey} */ accessKey, /** @type {number} */ baselineDataTransfer) {
+    const relativeTransfer = this._getRelevantTransferAmountForKey(accessKey);
+    const width = Math.floor(progressBarMaxWidthPx * relativeTransfer / baselineDataTransfer);
+    // It's important that there's no space in between width and "px" in order for Chrome to accept
+    // the inline style string.
+    return `width: ${width}px;`;
+  }
+
+  _getDataLimitsUsageString(accessKey, UNUSED_language) {
+    if (!accessKey) {
+      // We're in app startup
       return '';
     }
-    const used = this._formatBytesTransferred(accessKey.transferredBytes, '0');
-    const total = this.accessKeyDataLimit.value + ' ' + this.accessKeyDataLimit.unit;
+
+    const activeDataLimit = this._activeDataLimitForKey(accessKey);
+    const used = this._formatBytesTransferred(accessKey.transferredBytes, this.language, '0');
+    const total = this._formatDisplayDataLimit(activeDataLimit, this.language);
     return this.localize('data-limits-usage', 'used', used, 'total', total);
+  }
+
+  // Takes language so that the server location is recalculated on app language change.
+  _formatLocation(serverLocationId, UNUSED_language) {
+    if (!serverLocationId) {
+      return '';
+    }
+    return this.localize(`city-${serverLocationId}`);
   }
 }
 
