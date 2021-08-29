@@ -27,6 +27,8 @@ import {Polymer} from '@polymer/polymer/lib/legacy/polymer-fn.js';
 import {html} from '@polymer/polymer/lib/utils/html-tag.js';
 
 import {formatBytesParts} from '../data_formatting';
+import {getCloudName, getCloudIcon} from './cloud-assets';
+import {getShortName} from '../location_formatting';
 
 Polymer({
   _template: html`
@@ -48,6 +50,7 @@ Polymer({
         margin-right: 24px;
         color: #fff;
         opacity: 0.87;
+        filter: grayscale(100%);
       }
       .setting > div {
         width: 100%;
@@ -171,12 +174,12 @@ Polymer({
     </style>
     <div class="container">
       <div class="content">
-        <!-- DO information -->
-        <div class="setting card-section" hidden\$="[[!isServerManaged]]">
-          <img class="setting-icon digital-ocean-icon" src="images/do_white_logo.svg">
+        <!-- Managed Server information -->
+        <div class="setting card-section" hidden\$="[[!cloudId]]">
+          <img class="setting-icon" src="[[_getCloudIcon(cloudId)]]">
           <div>
-            <h3>DigitalOcean</h3>
-            <paper-input readonly="" value="[[serverLocation]]" label="[[localize('settings-server-location')]]" hidden\$="[[!serverLocation]]" always-float-label="" maxlength="100"></paper-input>
+            <h3>[[_getCloudName(cloudId)]]</h3>
+            <paper-input readonly="" value="[[_getShortName(cloudLocation, localize)]]" label="[[localize('settings-server-location')]]" hidden\$="[[!cloudLocation]]" always-float-label="" maxlength="100"></paper-input>
             <paper-input readonly="" value="[[serverMonthlyCost]]" label="[[localize('settings-server-cost')]]" hidden\$="[[!serverMonthlyCost]]" always-float-label="" maxlength="100"></paper-input>
             <paper-input readonly="" value="[[serverMonthlyTransferLimit]]" label="[[localize('settings-transfer-limit')]]" hidden\$="[[!serverMonthlyTransferLimit]]" always-float-label="" maxlength="100"></paper-input>
           </div>
@@ -259,7 +262,6 @@ Polymer({
   is: 'outline-server-settings',
 
   properties: {
-    isServerManaged: Boolean,
     serverName: String,
     metricsEnabled: Boolean,
     // Initialize to null so we can use the hidden attribute, which does not work well with
@@ -277,7 +279,8 @@ Polymer({
     showFeatureMetricsDisclaimer: {type: Boolean, value: false},
     isHostnameEditable: {type: Boolean, value: true},
     serverCreationDate: {type: Date, value: '1970-01-01T00:00:00.000Z'},
-    serverLocation: {type: String, value: null},
+    cloudLocation: {type: Object, value: null},
+    cloudId: {type: String, value: null},
     serverMonthlyCost: {type: String, value: null},
     serverMonthlyTransferLimit: {type: String, value: null},
     language: {type: String, value: 'en'},
@@ -360,6 +363,10 @@ Polymer({
     const valid = !Number.isNaN(port) && port >= 1 && port <= 65535 && Number.isInteger(port);
     return valid ? '' : this.localize('error-keys-port-bad-input');
   },
+
+  _getShortName: getShortName,
+  _getCloudIcon: getCloudIcon,
+  _getCloudName: getCloudName,
 
   _getInternationalizedUnit(bytesAmount, language) {
     return formatBytesParts(bytesAmount, language).unit;

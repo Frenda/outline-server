@@ -16,6 +16,7 @@ import '../ui_components/outline-about-dialog';
 import '../ui_components/outline-do-oauth-step';
 import '../ui_components/outline-gcp-oauth-step';
 import '../ui_components/outline-gcp-create-server-app';
+import '../ui_components/outline-server-view';
 import '../ui_components/outline-feedback-dialog';
 import '../ui_components/outline-share-dialog';
 import '../ui_components/outline-sort-span';
@@ -28,8 +29,12 @@ import IntlMessageFormat from 'intl-messageformat';
 import {css, customElement, html, LitElement, property} from 'lit-element';
 
 import * as gcp from '../../model/gcp';
-import {FakeGcpAccount} from '../testing/models';
+import {FakeManagedServer, FakeGcpAccount} from '../testing/models';
 import {OutlinePerKeyDataLimitDialog} from '../ui_components/outline-per-key-data-limit-dialog';
+import {COMMON_STYLES} from '../ui_components/cloud-install-styles';
+import {DisplayCloudId} from '../ui_components/cloud-assets';
+
+const FAKE_SERVER = new FakeManagedServer('fake-id', true);
 
 async function makeLocalize(language: string) {
   let messages: {[key: string]: string};
@@ -55,26 +60,48 @@ async function makeLocalize(language: string) {
   };
 }
 
-const GCP_LOCATIONS: gcp.ZoneMap = {
-  'us-central1': ['us-central1-a', 'us-central1-b', 'us-central1-c'],
-  'asia-east1': ['asia-east1-a', 'asia-east1-b'],
-  'europe-west1': ['europe-west1-a', 'europe-west1-b', 'europe-west1-c'],
-};
+function fakeLocalize(id: string) {
+  return id;
+}
+
+const GCP_LOCATIONS: gcp.ZoneOption[] = [
+  {
+    cloudLocation: new gcp.Zone('us-central1-fake'),
+    available: true,
+  },
+  {
+    cloudLocation: new gcp.Zone('europe-west3-fake'),
+    available: true,
+  },
+  {
+    cloudLocation: new gcp.Zone('europe-west3-fake2'),
+    available: true,
+  },
+  {
+    cloudLocation: new gcp.Zone('southamerica-east1-b'),
+    available: false,
+  },
+  {
+    cloudLocation: new gcp.Zone('fake-location-z'),
+    available: true
+  }
+];
+
 const GCP_BILLING_ACCOUNTS: gcp.BillingAccount[] =
     [{id: '1234-123456', name: 'My Billing Account'}];
 
 @customElement('outline-test-app')
 export class TestApp extends LitElement {
   @property({type: String}) dir = 'ltr';
-  @property({type: Function}) localize: (...args: string[]) => string;
+  @property({type: Function}) localize: (...args: string[]) => string = fakeLocalize;
+  @property({type: String}) language = 'zz';  // Replaced asynchronously in the constructor.
   @property({type: Boolean}) savePerKeyDataLimitSuccessful = true;
   @property({type: Number}) keyDataLimit: number|undefined;
   @property({type: String}) gcpRefreshToken = '';
   @property({type: Boolean}) gcpAccountHasBillingAccounts = false;
-  private language = '';
 
   static get styles() {
-    return css`
+    return [COMMON_STYLES, css`
       :host {
         background: white;
         display: block;
@@ -87,7 +114,10 @@ export class TestApp extends LitElement {
         display: block;
         padding: 20px;
       }
-    `;
+      .backdrop {
+        background: var(--background-color);
+      }
+    `];
   }
 
   constructor() {
@@ -146,8 +176,33 @@ export class TestApp extends LitElement {
            ?checked=${this.gcpAccountHasBillingAccounts}
            @tap=${() => this.gcpAccountHasBillingAccounts = !this.gcpAccountHasBillingAccounts}
         >Fake billing accounts</paper-checkbox>
-        <outline-gcp-create-server-app .localize=${
-        this.localize}></outline-gcp-create-server-app>        
+        <outline-gcp-create-server-app
+            .localize=${this.localize}
+            .language=${this.language}
+        ></outline-gcp-create-server-app>
+      </div>
+
+      <div class="widget">
+        <h2>outline-server-view</h2>
+        <div class="backdrop">
+          <outline-server-view
+              .serverId=${FAKE_SERVER.getId()}
+              .serverName=${FAKE_SERVER.getName()}
+              .serverHostname=${FAKE_SERVER.getHostnameForAccessKeys()}
+              .serverManagementApiUrl=${FAKE_SERVER.getManagementApiUrl()}
+              .serverPortForNewAccessKeys=${FAKE_SERVER.getPortForNewAccessKeys()}
+              .serverCreationDate=${FAKE_SERVER.getCreatedDate()}
+              .serverVersion=${FAKE_SERVER.getVersion()}
+              .defaultDataLimitBytes="5000000000"
+              .isDefaultDataLimitEnabled="true"
+              .monthlyCost=${FAKE_SERVER.getHost().getMonthlyCost().usd}
+              .monthlyOutboundTransferBytes=${FAKE_SERVER.getHost().getMonthlyOutboundTransferLimit()?.terabytes * (10 ** 12)}
+              .cloudLocation=${FAKE_SERVER.getHost().getCloudLocation()}
+              .cloudId=${DisplayCloudId.DO}
+              .localize=${this.localize}
+              .language=${this.language}
+          ></outline-server-view>
+        </div>
       </div>
 
       <div

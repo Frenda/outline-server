@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {CloudLocation} from "./location";
+
 export interface Server {
   // Gets a globally unique identifier for this Server.  THIS MUST NOT make a network request, as
   // it's used to identify unreachable servers.
@@ -105,12 +107,12 @@ export interface ManualServer extends Server {
 // Managed servers are servers created by the Outline Manager through our
 // "magic" user experience, e.g. DigitalOcean.
 export interface ManagedServer extends Server {
-  // Returns a promise that fulfills once installation is complete.
-  waitOnInstall(): Promise<void>;
+  // Yields how far installation has progressed (0.0 to 1.0).
+  // Exits when installation has completed.
+  // Throws if installation fails or is canceled.
+  monitorInstallProgress(): AsyncGenerator<number, void>;
   // Returns server host object.
   getHost(): ManagedServerHost;
-  // Returns true when installation is complete.
-  isInstallCompleted(): boolean;
 }
 
 // The managed machine where the Outline Server is running.
@@ -119,8 +121,8 @@ export interface ManagedServerHost {
   getMonthlyOutboundTransferLimit(): DataAmount;
   // Returns the monthly cost.
   getMonthlyCost(): MonetaryCost;
-  // Returns the server region.
-  getRegionId(): RegionId;
+  // Returns the server location
+  getCloudLocation(): CloudLocation;
   // Deletes the server - cannot be undone.
   delete(): Promise<void>;
 }
@@ -133,8 +135,6 @@ export class MonetaryCost {
   // Value in US dollars.
   usd: number;
 }
-
-export type RegionId = string;
 
 // Configuration for manual servers.  This is the output emitted from the
 // shadowbox install script, which is needed for the manager connect to

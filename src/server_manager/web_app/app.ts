@@ -22,15 +22,14 @@ import * as accounts from '../model/accounts';
 import * as digitalocean from '../model/digitalocean';
 import * as gcp from '../model/gcp';
 import * as server from '../model/server';
+import {CloudLocation} from '../model/location';
 
 import {DisplayDataAmount, displayDataAmountToBytes,} from './data_formatting';
-import * as digitalocean_server from './digitalocean_server';
-import {DigitalOceanServer} from './digitalocean_server';
-import {GcpServer} from './gcp_server';
+import {filterOptions, getShortName} from './location_formatting';
 import {parseManualServerConfig} from './management_urls';
 import {AppRoot, ServerListEntry} from './ui_components/app-root';
-import {Location} from './ui_components/outline-region-picker-step';
 import {DisplayAccessKey, ServerView} from './ui_components/outline-server-view';
+import {DisplayCloudId} from './ui_components/cloud-assets';
 
 // The Outline DigitalOcean team's referral code:
 //   https://www.digitalocean.com/help/referral-program/
@@ -43,19 +42,6 @@ const KEY_SETTINGS_VERSION = '1.6.0';
 const MAX_ACCESS_KEY_DATA_LIMIT_BYTES = 50 * (10 ** 9);  // 50GB
 const CANCELLED_ERROR = new Error('Cancelled');
 export const LAST_DISPLAYED_SERVER_STORAGE_KEY = 'lastDisplayedServer';
-
-// DigitalOcean mapping of regions to flags
-const FLAG_IMAGE_DIR = 'images/flags';
-const DIGITALOCEAN_FLAG_MAPPING: {[cityId: string]: string} = {
-  ams: `${FLAG_IMAGE_DIR}/netherlands.png`,
-  sgp: `${FLAG_IMAGE_DIR}/singapore.png`,
-  blr: `${FLAG_IMAGE_DIR}/india.png`,
-  fra: `${FLAG_IMAGE_DIR}/germany.png`,
-  lon: `${FLAG_IMAGE_DIR}/uk.png`,
-  sfo: `${FLAG_IMAGE_DIR}/us.png`,
-  tor: `${FLAG_IMAGE_DIR}/canada.png`,
-  nyc: `${FLAG_IMAGE_DIR}/us.png`,
-};
 
 function displayDataAmountToDataLimit(dataAmount: DisplayDataAmount): server.DataLimit|null {
   if (!dataAmount) {
@@ -73,7 +59,8 @@ async function computeDefaultDataLimit(
     // Assume non-managed servers have a data transfer capacity of 1TB.
     let serverTransferCapacity: server.DataAmount = {terabytes: 1};
     if (isManagedServer(server)) {
-      serverTransferCapacity = server.getHost().getMonthlyOutboundTransferLimit();
+      serverTransferCapacity =
+          server.getHost().getMonthlyOutboundTransferLimit() ?? serverTransferCapacity;
     }
     if (!accessKeys) {
       accessKeys = await server.listAccessKeys();
@@ -164,8 +151,8 @@ export class App {
       this.showIntro();
     });
 
-    appRoot.addEventListener('SetUpServerRequested', (event: CustomEvent) => {
-      this.createDigitalOceanServer(event.detail.regionId);
+    appRoot.addEventListener('SetUpDigitalOceanServerRequested', (event: CustomEvent) => {
+      this.createDigitalOceanServer(event.detail.region);
     });
 
     appRoot.addEventListener('DeleteServerRequested', (event: CustomEvent) => {
@@ -349,7 +336,7 @@ export class App {
       this.digitalOceanAccount = digitalOceanAccount;
       this.appRoot.digitalOceanAccount = {
         id: this.digitalOceanAccount.getId(),
-        name: await this.digitalOceanAccount.getName()
+        name: await this.digitalOceanAccount.getName(),
       };
       const status = await this.digitalOceanAccount.getStatus();
       if (status !== digitalocean.Status.ACTIVE) {
@@ -374,7 +361,10 @@ export class App {
     }
 
     this.gcpAccount = gcpAccount;
-    this.appRoot.gcpAccount = {id: this.gcpAccount.getId(), name: await this.gcpAccount.getName()};
+    this.appRoot.gcpAccount = {
+      id: this.gcpAccount.getId(),
+      name: await this.gcpAccount.getName(),
+    };
 
     const result = [];
     const gcpProjects = await this.gcpAccount.listProjects();
@@ -406,14 +396,12 @@ export class App {
   private makeDisplayName(server: server.Server): string {
     let name = server.getName() ?? server.getHostnameForAccessKeys();
     if (!name) {
-      let location = null;
+      let cloudLocation = null;
       // Newly created servers will not have a name.
-      if (server instanceof DigitalOceanServer) {
-        location = this.getLocalizedCityName(server.getHost().getRegionId());
-      } else if (server instanceof GcpServer) {
-        location = server.getHost().getRegionId();
+      if (isManagedServer(server)) {
+        cloudLocation = server.getHost().getCloudLocation();
       }
-      name = this.makeLocalizedServerName(location);
+      name = this.makeLocalizedServerName(cloudLocation);
     }
     return name;
   }
@@ -424,18 +412,18 @@ export class App {
     const serverEntry = this.makeServerListEntry(accountId, server);
     this.appRoot.serverList = this.appRoot.serverList.concat([serverEntry]);
 
-    if (isManagedServer(server) && !server.isInstallCompleted()) {
+    if (isManagedServer(server)) {
       this.setServerProgressView(server);
     }
 
     // Once the server is added to the list, do the rest asynchronously.
     setTimeout(async () => {
       // Wait for server config to load, then update the server view and list.
-      if (isManagedServer(server) && !server.isInstallCompleted()) {
+      if (isManagedServer(server)) {
         try {
-          await server.waitOnInstall();
+          for await (const _ of server.monitorInstallProgress()) {}
         } catch (error) {
-          if (error instanceof errors.DeletedServerError) {
+          if (error instanceof errors.ServerInstallCanceledError) {
             // User clicked "Cancel" on the loading screen.
             return;
           }
@@ -601,6 +589,7 @@ export class App {
     let digitalOceanAccount: digitalocean.Account = null;
     try {
       const accessToken = await this.runDigitalOceanOauthFlow();
+      bringToFront();
       digitalOceanAccount = this.cloudAccounts.connectDigitalOceanAccount(accessToken);
     } catch (error) {
       this.disconnectDigitalOceanAccount();
@@ -625,6 +614,7 @@ export class App {
     let gcpAccount: gcp.Account = null;
     try {
       const refreshToken = await this.runGcpOauthFlow();
+      bringToFront();
       gcpAccount = this.cloudAccounts.connectGcpAccount(refreshToken);
     } catch (error) {
       this.disconnectGcpAccount();
@@ -637,8 +627,12 @@ export class App {
       return;
     }
 
-    await this.loadGcpAccount(gcpAccount);
-    this.showIntro();
+    const gcpServers = await this.loadGcpAccount(gcpAccount);
+    if (gcpServers.length > 0) {
+      this.showServer(gcpServers[0]);
+    } else {
+      this.appRoot.getAndShowGcpCreateServerApp().start(this.gcpAccount);
+    }
   }
 
   // Clears the DigitalOcean credentials and returns to the intro screen.
@@ -691,17 +685,12 @@ export class App {
       return;
     }
 
-    // The region picker initially shows all options as disabled. Options are enabled by this code,
-    // after checking which regions are available.
     try {
       const regionPicker = this.appRoot.getAndShowRegionPicker();
       const map = await this.digitalOceanRetry(() => {
-        return this.digitalOceanAccount.getRegionMap();
+        return this.digitalOceanAccount.listLocations();
       });
-      const locations = Object.entries(map).map(([cityId, regionIds]) => {
-        return this.createLocationModel(cityId, regionIds);
-      });
-      regionPicker.locations = locations;
+      regionPicker.options = filterOptions(map);
     } catch (e) {
       console.error(`Failed to get list of available regions: ${e}`);
       this.appRoot.showError(this.appRoot.localize('error-do-regions'));
@@ -710,12 +699,11 @@ export class App {
 
   // Returns a promise which fulfills once the DigitalOcean droplet is created.
   // Shadowbox may not be fully installed once this promise is fulfilled.
-  public async createDigitalOceanServer(regionId: server.RegionId): Promise<void> {
+  public async createDigitalOceanServer(region: digitalocean.Region): Promise<void> {
     try {
-      const serverLocation = this.getLocalizedCityName(regionId);
-      const serverName = this.makeLocalizedServerName(serverLocation);
+      const serverName = this.makeLocalizedServerName(region);
       const server = await this.digitalOceanRetry(() => {
-        return this.digitalOceanAccount.createServer(regionId, serverName);
+        return this.digitalOceanAccount.createServer(region, serverName);
       });
       this.addServer(this.digitalOceanAccount.getId(), server);
       this.showServer(server);
@@ -725,13 +713,9 @@ export class App {
     }
   }
 
-  private getLocalizedCityName(regionId: server.RegionId): string {
-    const cityId = digitalocean_server.GetCityId(regionId);
-    return this.appRoot.localize(`city-${cityId}`);
-  }
-
-  private makeLocalizedServerName(location: string): string {
-    return this.appRoot.localize('server-name', 'serverLocation', location);
+  private makeLocalizedServerName(cloudLocation: CloudLocation): string {
+    const placeName = getShortName(cloudLocation, this.appRoot.localize);
+    return this.appRoot.localize('server-name', 'serverLocation', placeName);
   }
 
   public showServer(server: server.Server): void {
@@ -755,9 +739,7 @@ export class App {
     const view = await this.appRoot.getServerView(server.getId());
     const version = server.getVersion();
     view.selectedPage = 'managementView';
-    view.serverId = server.getId();
     view.metricsId = server.getMetricsId();
-    view.serverName = server.getName();
     view.serverHostname = server.getHostnameForAccessKeys();
     view.serverManagementApiUrl = server.getManagementApiUrl();
     view.serverPortForNewAccessKeys = server.getPortForNewAccessKeys();
@@ -776,14 +758,11 @@ export class App {
     }
 
     if (isManagedServer(server)) {
-      view.isServerManaged = true;
       const host = server.getHost();
-      view.monthlyCost = host.getMonthlyCost().usd;
+      view.monthlyCost = host.getMonthlyCost()?.usd;
       view.monthlyOutboundTransferBytes =
-          host.getMonthlyOutboundTransferLimit().terabytes * (10 ** 12);
-      view.serverLocationId = digitalocean_server.GetCityId(host.getRegionId());
-    } else {
-      view.isServerManaged = false;
+          host.getMonthlyOutboundTransferLimit()?.terabytes * (10 ** 12);
+      view.cloudLocation = host.getCloudLocation();
     }
 
     view.metricsEnabled = server.getMetricsEnabled();
@@ -816,19 +795,20 @@ export class App {
     const serverId = server.getId();
     const serverView = await this.appRoot.getServerView(serverId);
     serverView.selectedPage = 'unreachableView';
-    serverView.isServerManaged = isManagedServer(server);
-    serverView.serverName =
-        this.makeDisplayName(server);  // Don't get the name from the remote server.
-    serverView.serverId = serverId;
     serverView.retryDisplayingServer = async () => {
       await this.updateServerView(server);
     };
   }
 
-  private async setServerProgressView(server: server.Server): Promise<void> {
+  private async setServerProgressView(server: server.ManagedServer): Promise<void> {
     const view = await this.appRoot.getServerView(server.getId());
     view.serverName = this.makeDisplayName(server);
     view.selectedPage = 'progressView';
+    try {
+      for await (view.installProgress of server.monitorInstallProgress()) {}
+    } catch {
+      // Ignore any errors; they will be handled by `this.addServer`.
+    }
   }
 
   private showMetricsOptInWhenNeeded(selectedServer: server.Server, serverView: ServerView) {
@@ -1139,6 +1119,7 @@ export class App {
     const confirmationButton = this.appRoot.localize('destroy');
     this.appRoot.getConfirmation(confirmationTitle, confirmationText, confirmationButton, () => {
       this.digitalOceanRetry(() => {
+            // TODO: Add an activity indicator in OutlineServerView during deletion.
             return serverToDelete.getHost().delete();
           })
           .then(
@@ -1214,6 +1195,9 @@ export class App {
       console.error(msg);
       throw new Error(msg);
     }
+    // TODO: Make the cancel button show an immediate state transition,
+    // indicate that deletion is in-progress, and allow the user to return
+    // to server creation in the meantime.
     serverToCancel.getHost().delete().then(() => {
       this.removeServer(serverToCancel.getId());
       this.showIntro();
@@ -1228,14 +1212,5 @@ export class App {
     } catch (error) {
       this.appRoot.showError(this.appRoot.localize('error-unexpected'));
     }
-  }
-
-  private createLocationModel(cityId: string, regionIds: string[]): Location {
-    return {
-      id: regionIds.length > 0 ? regionIds[0] : null,
-      name: this.appRoot.localize(`city-${cityId}`),
-      flag: DIGITALOCEAN_FLAG_MAPPING[cityId] || '',
-      available: regionIds.length > 0,
-    };
   }
 }

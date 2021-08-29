@@ -48,6 +48,8 @@ import {html} from '@polymer/polymer/lib/utils/html-tag.js';
 import {PolymerElement} from '@polymer/polymer/polymer-element.js';
 
 import {ServerView} from './outline-server-view.js';
+import {OutlineRegionPicker} from './outline-region-picker-step';
+import {DisplayCloudId} from './cloud-assets';
 
 const TOS_ACK_LOCAL_STORAGE_KEY = 'tos-ack';
 
@@ -67,6 +69,7 @@ const TOS_ACK_LOCAL_STORAGE_KEY = 'tos-ack';
  * @prop {boolean} isSynced
  */
 
+/** @extends {PolymerElement} */
 export class AppRoot extends mixinBehaviors
 ([AppLocalizeBehavior], PolymerElement) {
   static get template() {
@@ -391,10 +394,11 @@ export class AppRoot extends mixinBehaviors
               <outline-intro-step id="intro" digital-ocean-account-name="{{digitalOceanAccount.name}}" gcp-account-name="{{gcpAccount.name}}" localize="[[localize]]"></outline-intro-step>
               <outline-do-oauth-step id="digitalOceanOauth" localize="[[localize]]"></outline-do-oauth-step>
               <outline-gcp-oauth-step id="gcpOauth" localize="[[localize]]"></outline-gcp-oauth-step>
-              <outline-gcp-create-server-app id="gcpCreateServer" localize="[[localize]]"></outline-gcp-create-server-app>
+              <outline-gcp-create-server-app id="gcpCreateServer" localize="[[localize]]" language="[[language]]"></outline-gcp-create-server-app>
               <outline-manual-server-entry id="manualEntry" localize="[[localize]]"></outline-manual-server-entry>
-              <outline-region-picker-step id="regionPicker" localize="[[localize]]"></outline-region-picker-step>
-              <outline-server-list id="serverView" server-list="[[serverList]]" selected-server-id="[[selectedServerId]]" language="[[language]]" localize="[[localize]]"></outline-server-list>
+              <!-- TODO: Move to a new outline-do-oauth-step. -->
+              <outline-region-picker-step id="regionPicker" localize="[[localize]]" language="[[language]]"></outline-region-picker-step>
+              <outline-server-list id="serverView" server-list="[[_serverViewList(serverList)]]" selected-server-id="[[selectedServerId]]" language="[[language]]" localize="[[localize]]"></outline-server-list>
               </div>
             </iron-pages>
           </div>
@@ -461,7 +465,7 @@ export class AppRoot extends mixinBehaviors
             <div class="do-overflow-menu" slot="dropdown-content">
               <h4>[[localize('digitalocean-disconnect-account')]]</h4>
               <div class="account-info"><img src="images/digital_ocean_logo.svg">[[digitalOceanAccount.name]]</div>
-              <div class="sign-out-button" on-tap="_digitalOceanSignOutTapped">[[localize('digitalocean-disconnect')]]</div>
+              <div class="sign-out-button" on-tap="_digitalOceanSignOutTapped">[[localize('disconnect')]]</div>
             </div>
           </paper-menu-button>
         </div>
@@ -483,7 +487,7 @@ export class AppRoot extends mixinBehaviors
             <div class="do-overflow-menu" slot="dropdown-content">
               <h4>[[localize('gcp-disconnect-account')]]</h4>
               <div class="account-info"><img src="images/gcp-logo.svg">[[gcpAccount.name]]</div>
-              <div class="sign-out-button" on-tap="_gcpSignOutTapped">[[localize('gcp-disconnect')]]</div>
+              <div class="sign-out-button" on-tap="_gcpSignOutTapped">[[localize('disconnect')]]</div>
             </div>
           </paper-menu-button>
         </div>
@@ -599,6 +603,11 @@ export class AppRoot extends mixinBehaviors
     this.currentPage = 'intro';
     this.shouldShowSideBar = false;
 
+    // Inform the Typescript compiler about the localize() function provided by
+    // the AppLocalizeBehavior mixin.
+    /** @type {(msgId: string, ...params: string[]) => string} */
+    this.localize;
+
     this.addEventListener('RegionSelected', this.handleRegionSelected);
     this.addEventListener(
         'SetUpGenericCloudProviderRequested', this.handleSetUpGenericCloudProviderRequested);
@@ -658,6 +667,10 @@ export class AppRoot extends mixinBehaviors
     this.currentPage = 'intro';
   }
 
+  /**
+   * @param {Function}
+   * @return {*}
+   */
   getDigitalOceanOauthFlow(onCancel) {
     const oauthFlow = this.$.digitalOceanOauth;
     oauthFlow.onCancel = onCancel;
@@ -688,12 +701,14 @@ export class AppRoot extends mixinBehaviors
     return this.$.gcpCreateServer;
   }
 
+  /** @return {OutlineRegionPicker} */
   getAndShowRegionPicker() {
     this.currentPage = 'regionPicker';
     this.$.regionPicker.reset();
     return this.$.regionPicker;
   }
 
+  /** @return {*} */
   getManualServerEntry() {
     return this.$.manualEntry;
   }
@@ -720,9 +735,7 @@ export class AppRoot extends mixinBehaviors
   }
 
   handleRegionSelected(/** @type {Event} */ e) {
-    this.fire('SetUpServerRequested', {
-      regionId: e.detail.selectedRegionId,
-    });
+    this.fire('SetUpDigitalOceanServerRequested', {region: e.detail.selectedLocation});
   }
 
   handleSetUpGenericCloudProviderRequested() {
@@ -995,6 +1008,32 @@ export class AppRoot extends mixinBehaviors
       return 'server-icon-selected.png';
     }
     return 'server-icon.png';
+  }
+
+  /**
+   * @param {string} accountId 
+   * @return {DisplayCloudId}
+   */
+  _getCloudId(accountId) {
+    // TODO: Replace separate account fields with a map.
+    if (this.gcpAccount && accountId === this.gcpAccount.id) {
+      return DisplayCloudId.GCP;
+    } else if (this.digitalOceanAccount && accountId === this.digitalOceanAccount.id) {
+      return DisplayCloudId.DO;
+    }
+    return null;
+  }
+
+  /**
+   * @param {ServerListEntry[]} serverList
+   * @return {import('./outline-server-list').ServerViewListEntry}
+   */
+  _serverViewList(serverList) {
+    return serverList.map(entry => ({
+      id: entry.id,
+      name: entry.name,
+      cloudId: this._getCloudId(entry.accountId),
+    }));
   }
 
   _isServerSelected(selectedServerId, server) {
