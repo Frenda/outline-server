@@ -22,14 +22,16 @@ import * as accounts from '../model/accounts';
 import * as digitalocean from '../model/digitalocean';
 import * as gcp from '../model/gcp';
 import * as server from '../model/server';
-import {CloudLocation} from '../model/location';
 
 import {DisplayDataAmount, displayDataAmountToBytes,} from './data_formatting';
 import {filterOptions, getShortName} from './location_formatting';
 import {parseManualServerConfig} from './management_urls';
-import {AppRoot, ServerListEntry} from './ui_components/app-root';
-import {DisplayAccessKey, ServerView} from './ui_components/outline-server-view';
-import {DisplayCloudId} from './ui_components/cloud-assets';
+import {HttpError} from '../cloud/gcp_api';
+
+import type {CloudLocation} from '../model/location';
+import type {AppRoot, ServerListEntry} from './ui_components/app-root';
+import type {FeedbackDetail} from './ui_components/outline-feedback-dialog';
+import type {DisplayAccessKey, ServerView} from './ui_components/outline-server-view';
 
 // The Outline DigitalOcean team's referral code:
 //   https://www.digitalocean.com/help/referral-program/
@@ -246,7 +248,7 @@ export class App {
     });
 
     appRoot.addEventListener('SubmitFeedback', (event: CustomEvent) => {
-      const detail = event.detail;
+      const detail: FeedbackDetail = event.detail;
       try {
         sentry.captureEvent({
           message: detail.userFeedback,
@@ -369,10 +371,24 @@ export class App {
     const result = [];
     const gcpProjects = await this.gcpAccount.listProjects();
     for (const gcpProject of gcpProjects) {
-      const servers = await this.gcpAccount.listServers(gcpProject.id);
-      for (const server of servers) {
-        this.addServer(this.gcpAccount.getId(), server);
-        result.push(server);
+      try {
+        const servers = await this.gcpAccount.listServers(gcpProject.id);
+        for (const server of servers) {
+          this.addServer(this.gcpAccount.getId(), server);
+          result.push(server);
+        }
+      } catch (e) {
+        if (e instanceof HttpError && e.getStatusCode() === 403) {
+          // listServers() throws an HTTP 403 if the outline project has been
+          // created but the billing account has been removed, which can
+          // easily happen after the free trial period expires.  This is
+          // harmless, because a project with no billing cannot contain any
+          // servers, and the GCP server creation flow will check and correct
+          // the billing account setup.
+          console.warn(`Ignoring HTTP 403 for GCP project "${gcpProject.id}"`);
+        } else {
+          throw e;
+        }
       }
     }
     return result;
@@ -714,7 +730,8 @@ export class App {
   }
 
   private makeLocalizedServerName(cloudLocation: CloudLocation): string {
-    const placeName = getShortName(cloudLocation, this.appRoot.localize);
+    const placeName = getShortName(cloudLocation,
+        this.appRoot.localize as (id: string) => string);
     return this.appRoot.localize('server-name', 'serverLocation', placeName);
   }
 
@@ -1204,7 +1221,7 @@ export class App {
     });
   }
 
-  private async setAppLanguage(languageCode: string, languageDir: string) {
+  private async setAppLanguage(languageCode: string, languageDir: 'rtl'|'ltr') {
     try {
       await this.appRoot.setLanguage(languageCode, languageDir);
       document.documentElement.setAttribute('dir', languageDir);
