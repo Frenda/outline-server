@@ -1,4 +1,4 @@
-#!/bin/bash -eu
+#!/bin/bash
 #
 # Copyright 2018 The Outline Authors
 #
@@ -14,25 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-do_action shadowbox/docker/build
+set -eu
 
-LOGFILE="$(mktemp)"
-readonly LOGFILE
-echo "Running Shadowbox integration test.  Logs at ${LOGFILE}"
+rm -rf "${BUILD_DIR}/server_manager/web_app"
 
-cd src/shadowbox/integration_test
+run_action server_manager/web_app/build_install_script
 
-declare -i result=0
-
-if ./test.sh > "${LOGFILE}" 2>&1 ; then
-  echo "Test Passed!"
-  # Removing the log file sometimes fails on Travis.  There's no point in us cleaning it up
-  # on a CI build anyways.
-  rm -f "${LOGFILE}"
-else
-  result=$?
-  echo "Test Failed!  Logs:"
-  cat "${LOGFILE}"
-fi
-
-exit "${result}"
+webpack-dev-server --config=src/server_manager/browser.webpack.js --open

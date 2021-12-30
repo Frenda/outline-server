@@ -14,15 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-readonly TEST_DIR="${BUILD_DIR}/js/server_manager/"
-rm -rf "${TEST_DIR}"
+run_action server_manager/electron_app/build
 
-yarn 'do' server_manager/web_app/build_install_script
+cd "${BUILD_DIR}/server_manager/electron_app/static"
 
-# Use commonjs modules, jasmine runs in node.
-tsc -p "${ROOT_DIR}/src/server_manager" --outDir "${TEST_DIR}" --module commonjs
-jasmine --config="${ROOT_DIR}/jasmine.json"
-
-yarn 'do' server_manager/web_app/test
-
-rm -rf "${TEST_DIR}"
+OUTLINE_DEBUG='true' \
+  SB_METRICS_URL='https://dev.metrics.getoutline.org' \
+  electron .
