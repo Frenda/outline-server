@@ -14,7 +14,7 @@
 
 // Functions made available to the renderer process via preload.ts.
 
-declare function trustCertificate(fingerprint: string): boolean;
+declare function trustCertificate(host: string, fingerprint: string): boolean;
 declare function openImage(basename: string): void;
 declare function onUpdateDownloaded(callback: () => void): void;
 
@@ -35,4 +35,4 @@ declare function runGcpOauth(): OauthSession;
 declare function bringToFront(): void;
 
 // From base.webpack.js.
-declare const outline: { gcpAuthEnabled: boolean; };
+declare const outline: {gcpAuthEnabled: boolean};
