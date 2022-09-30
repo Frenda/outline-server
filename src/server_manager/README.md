@@ -5,14 +5,16 @@
 To run the Outline Manager Electron app:
 
 ```
-npm run action server_manager/electron_app/start
+npm run action server_manager/electron_app/start ${PLATFORM}
 ```
 
 To run the Outline Manager Electron app with a development build (code not minified):
 
 ```
-BUILD_ENV=development npm run action server_manager/electron_app/start
+BUILD_ENV=development npm run action server_manager/electron_app/start ${PLATFORM}
 ```
+
+Where `${PLATFORM}` is one of `linux`, `macos`, `windows`.
 
 ## Development Server
 
@@ -45,7 +47,7 @@ To build the app binary:
 npm run action server_manager/electron_app/build ${PLATFORM} -- --buildMode=[debug,release]
 ```
 
-Where `${PLATFORM}` is one of `linux`, `mac`, `windows`.
+Where `${PLATFORM}` is one of `linux`, `macos`, `windows`.
 
 The per-platform standalone apps will be at `build/electron_app/static/dist`.
 
@@ -59,13 +61,5 @@ To enable error reporting through [Sentry](https://sentry.io/) for local builds,
 
 ```bash
 export SENTRY_DSN=[Sentry development API key]
-npm run action server_manager/electron_app/start
+npm run action server_manager/electron_app/start ${PLATFORM}
 ```
-
-## CI Environment Variables
-
-For your CI to run smoothly, you'll need the following in your ENV:
-
-- `SENTRY_DSN` - [url required](https://docs.sentry.io/product/sentry-basics/dsn-explainer/) to enable sentry integration. Same across all platforms.
-- `RELEASES_REPOSITORY` - the username and repository name of the repository you're pushing releases to. In our case, `Jigsaw-Code/outline-releases`
-- `RELEASES_DEPLOY_KEY` - an ssh secret key for the matching releases repository public deploy key - [how to set this up](https://docs.github.com/en/developers/overview/managing-deploy-keys#setup-2)

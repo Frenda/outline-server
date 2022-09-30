@@ -36,7 +36,9 @@ exports.makeConfig = (options) => {
     devtool: 'inline-source-map',
     // Run the dev server with `npm run webpack-dev-server --workspace=outline-manager --open`
     devServer: {
-      overlay: true,
+      client: {
+        overlay: true,
+      },
     },
     output: {path: OUTPUT_BASE, filename: 'main.js'},
     module: {
@@ -60,7 +62,7 @@ exports.makeConfig = (options) => {
     resolve: {extensions: ['.tsx', '.ts', '.js']},
     plugins: [
       new webpack.DefinePlugin({
-        'outline.gcpAuthEnabled': JSON.stringify(process.env.GCP_AUTH_ENABLED === 'true'),
+        'outline.gcpAuthEnabled': JSON.stringify(process.env.GCP_AUTH_ENABLED !== 'false'),
         // Hack to protect against @sentry/electron not having process.type defined.
         'process.type': JSON.stringify('renderer'),
         // Statically link the Roboto font, rather than link to fonts.googleapis.com
