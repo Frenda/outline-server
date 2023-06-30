@@ -115,11 +115,17 @@ Create an access key
 curl --insecure -X POST $API_URL/access-keys
 ```
 
+Get an access key (e.g. get access key 1)
+
+```
+curl --insecure $API_URL/access-keys/1
+```
+
 Rename an access key
 (e.g. rename access key 2 to 'albion')
 
 ```
-curl --insecure -X PUT curl -F 'name=albion' $API_URL/access-keys/2/name
+curl --insecure -X PUT -F 'name=albion' $API_URL/access-keys/2/name
 ```
 
 Remove an access key

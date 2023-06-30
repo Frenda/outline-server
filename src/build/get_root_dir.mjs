@@ -1,4 +1,4 @@
-// Copyright 2018 The Outline Authors
+// Copyright 2023 The Outline Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,19 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import * as fs from 'fs';
-import {TextFile} from './text_file';
+import {dirname, resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
 
-// Reads a text file if it exists, or null if the file is not found.
-// Throws any other error except file not found.
-export class FilesystemTextFile implements TextFile {
-  constructor(private readonly filename: string) {}
+// WARNING: if you move this file, you MUST update this file path
+const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-  readFileSync(): string {
-    return fs.readFileSync(this.filename, {encoding: 'utf8'});
-  }
-
-  writeFileSync(text: string): void {
-    fs.writeFileSync(this.filename, text, {encoding: 'utf8'});
-  }
+export function getRootDir() {
+  return ROOT_DIR;
 }
