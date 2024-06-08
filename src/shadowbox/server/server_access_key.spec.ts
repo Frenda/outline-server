@@ -49,6 +49,48 @@ describe('ServerAccessKeyRepository', () => {
     });
   });
 
+  it('Generates unique access key IDs by default', async (done) => {
+    const repo = new RepoBuilder().build();
+    const accessKey1 = await repo.createNewAccessKey();
+    const accessKey2 = await repo.createNewAccessKey();
+    const accessKey3 = await repo.createNewAccessKey();
+    expect(accessKey1.id).not.toEqual(accessKey2.id);
+    expect(accessKey2.id).not.toEqual(accessKey3.id);
+    expect(accessKey3.id).not.toEqual(accessKey1.id);
+    done();
+  });
+
+  it('Can create new access keys with a given ID', async (done) => {
+    const repo = new RepoBuilder().build();
+    const accessKey1 = await repo.createNewAccessKey();
+    const accessKey2 = await repo.createNewAccessKey({id: 'myKeyId'});
+    const accessKey3 = await repo.createNewAccessKey();
+    expect(accessKey1.id).toEqual('0');
+    expect(accessKey2.id).toEqual('myKeyId');
+    expect(accessKey3.id).toEqual('1');
+    done();
+  });
+
+  it('createNewAccessKey throws on creating keys with existing IDs', async (done) => {
+    const repo = new RepoBuilder().build();
+    await repo.createNewAccessKey({id: 'myKeyId'});
+    await expectAsyncThrow(
+      repo.createNewAccessKey.bind(repo, {id: 'myKeyId'}),
+      errors.AccessKeyConflict
+    );
+    done();
+  });
+
+  it('createNewAccessKey throws on creating keys with existing passwords', async (done) => {
+    const repo = new RepoBuilder().build();
+    await repo.createNewAccessKey({password: 'P@$$w0rd'});
+    await expectAsyncThrow(
+      repo.createNewAccessKey.bind(repo, {password: 'P@$$w0rd'}),
+      errors.PasswordConflict
+    );
+    done();
+  });
+
   it('New access keys have the correct default encryption method', (done) => {
     const repo = new RepoBuilder().build();
     repo.createNewAccessKey().then((accessKey) => {
@@ -60,9 +102,80 @@ describe('ServerAccessKeyRepository', () => {
 
   it('New access keys sees the encryption method correctly', (done) => {
     const repo = new RepoBuilder().build();
-    repo.createNewAccessKey('aes-256-gcm').then((accessKey) => {
+    repo.createNewAccessKey({encryptionMethod: 'aes-256-gcm'}).then((accessKey) => {
       expect(accessKey).toBeDefined();
       expect(accessKey.proxyParams.encryptionMethod).toEqual('aes-256-gcm');
+      done();
+    });
+  });
+
+  it('createNewAccessKey throws on creating keys with invalid port', async (done) => {
+    const repo = new RepoBuilder().build();
+    await expectAsyncThrow(
+      repo.createNewAccessKey.bind(repo, {portNumber: -123}),
+      errors.InvalidPortNumber
+    );
+    done();
+  });
+
+  it('createNewAccessKey rejects invalid port numbers', async (done) => {
+    const repo = new RepoBuilder().build();
+    await expectAsyncThrow(
+      repo.createNewAccessKey.bind(repo, {portNumber: 0}),
+      errors.InvalidPortNumber
+    );
+    await expectAsyncThrow(
+      repo.createNewAccessKey.bind(repo, {portNumber: -1}),
+      errors.InvalidPortNumber
+    );
+    await expectAsyncThrow(
+      repo.createNewAccessKey.bind(repo, {portNumber: 100.1}),
+      errors.InvalidPortNumber
+    );
+    await expectAsyncThrow(
+      repo.createNewAccessKey.bind(repo, {portNumber: 65536}),
+      errors.InvalidPortNumber
+    );
+    done();
+  });
+
+  it('createNewAccessKey rejects specified ports in use', async (done) => {
+    const portProvider = new PortProvider();
+    const port = await portProvider.reserveNewPort();
+    const repo = new RepoBuilder().build();
+    const server = new net.Server();
+    server.listen(port, async () => {
+      try {
+        await repo.createNewAccessKey({portNumber: port});
+        fail(`createNewAccessKey should reject already used port ${port}.`);
+      } catch (error) {
+        expect(error instanceof errors.PortUnavailable);
+      }
+      server.close();
+      done();
+    });
+  });
+
+  it('createNewAccessKey creates keys with the correct default port', async (done) => {
+    const portProvider = new PortProvider();
+    const defaultPort = await portProvider.reserveNewPort();
+    const repo = new RepoBuilder().port(defaultPort).build();
+    repo.createNewAccessKey().then((accessKey) => {
+      expect(accessKey).toBeDefined();
+      expect(accessKey.proxyParams.portNumber).toEqual(defaultPort);
+      done();
+    });
+  });
+
+  it('createNewAccessKey creates keys with the port correctly', async (done) => {
+    const portProvider = new PortProvider();
+    const defaultPort = await portProvider.reserveNewPort();
+    const newPort = await portProvider.reserveNewPort();
+    const repo = new RepoBuilder().port(defaultPort).build();
+    repo.createNewAccessKey({portNumber: newPort}).then((accessKey) => {
+      expect(accessKey).toBeDefined();
+      expect(accessKey.proxyParams.portNumber).not.toEqual(defaultPort);
+      expect(accessKey.proxyParams.portNumber).toEqual(newPort);
       done();
     });
   });

@@ -22,20 +22,31 @@ import {JsonConfig} from '../infrastructure/json_config';
 import * as logging from '../infrastructure/logging';
 import {AccessKey, AccessKeyRepository, DataLimit} from '../model/access_key';
 import * as errors from '../model/errors';
-import {version} from '../package.json';
+import * as version from './version';
 
 import {ManagerMetrics} from './manager_metrics';
 import {ServerConfigJson} from './server_config';
 import {SharedMetricsPublisher} from './shared_metrics';
+import {ShadowsocksServer} from '../model/shadowsocks_server';
+
+interface AccessKeyJson {
+  // The unique identifier of this access key.
+  id: string;
+  // Admin-controlled, editable name for this access key.
+  name: string;
+  // Shadowsocks-specific details and credentials.
+  password: string;
+  port: number;
+  method: string;
+  dataLimit: DataLimit;
+  accessUrl: string;
+}
 
 // Creates a AccessKey response.
-function accessKeyToApiJson(accessKey: AccessKey) {
+function accessKeyToApiJson(accessKey: AccessKey): AccessKeyJson {
   return {
-    // The unique identifier of this access key.
     id: accessKey.id,
-    // Admin-controlled, editable name for this access key.
     name: accessKey.name,
-    // Shadowsocks-specific details and credentials.
     password: accessKey.proxyParams.password,
     port: accessKey.proxyParams.portNumber,
     method: accessKey.proxyParams.encryptionMethod,
@@ -129,6 +140,7 @@ export function bindService(
   );
 
   apiServer.post(`${apiPrefix}/access-keys`, service.createNewAccessKey.bind(service));
+  apiServer.put(`${apiPrefix}/access-keys/:id`, service.createAccessKey.bind(service));
   apiServer.get(`${apiPrefix}/access-keys`, service.listAccessKeys.bind(service));
 
   apiServer.get(`${apiPrefix}/access-keys/:id`, service.getAccessKey.bind(service));
@@ -146,6 +158,13 @@ export function bindService(
   apiServer.get(`${apiPrefix}/metrics/transfer`, service.getDataUsage.bind(service));
   apiServer.get(`${apiPrefix}/metrics/enabled`, service.getShareMetrics.bind(service));
   apiServer.put(`${apiPrefix}/metrics/enabled`, service.setShareMetrics.bind(service));
+
+  // Experimental APIs.
+
+  apiServer.put(
+    `${apiPrefix}/experimental/asn-metrics/enabled`,
+    service.enableAsnMetrics.bind(service)
+  );
 
   // Redirect former experimental APIs
   apiServer.put(
@@ -178,10 +197,11 @@ function validateAccessKeyId(accessKeyId: unknown): string {
   return accessKeyId;
 }
 
-function validateDataLimit(limit: unknown): DataLimit {
-  if (!limit) {
-    throw new restifyErrors.MissingParameterError({statusCode: 400}, 'Missing `limit` parameter');
+function validateDataLimit(limit: unknown): DataLimit | undefined {
+  if (typeof limit === 'undefined') {
+    return undefined;
   }
+
   const bytes = (limit as DataLimit).bytes;
   if (!(Number.isInteger(bytes) && bytes >= 0)) {
     throw new restifyErrors.InvalidArgumentError(
@@ -192,6 +212,34 @@ function validateDataLimit(limit: unknown): DataLimit {
   return limit as DataLimit;
 }
 
+function validateStringParam(param: unknown, paramName: string): string | undefined {
+  if (typeof param === 'undefined') {
+    return undefined;
+  }
+
+  if (typeof param !== 'string') {
+    throw new restifyErrors.InvalidArgumentError(
+      {statusCode: 400},
+      `Expected a string for ${paramName}, instead got ${param} of type ${typeof param}`
+    );
+  }
+  return param;
+}
+
+function validateNumberParam(param: unknown, paramName: string): number | undefined {
+  if (typeof param === 'undefined') {
+    return undefined;
+  }
+
+  if (typeof param !== 'number') {
+    throw new restifyErrors.InvalidArgumentError(
+      {statusCode: 400},
+      `Expected a number for ${paramName}, instead got ${param} of type ${typeof param}`
+    );
+  }
+  return param;
+}
+
 // The ShadowsocksManagerService manages the access keys that can use the server
 // as a proxy using Shadowsocks. It runs an instance of the Shadowsocks server
 // for each existing access key, with the port and password assigned for that access key.
@@ -200,6 +248,7 @@ export class ShadowsocksManagerService {
     private defaultServerName: string,
     private serverConfig: JsonConfig<ServerConfigJson>,
     private accessKeys: AccessKeyRepository,
+    private shadowsocksServer: ShadowsocksServer,
     private managerMetrics: ManagerMetrics,
     private metricsPublisher: SharedMetricsPublisher
   ) {}
@@ -232,10 +281,11 @@ export class ShadowsocksManagerService {
       serverId: this.serverConfig.data().serverId,
       metricsEnabled: this.serverConfig.data().metricsEnabled || false,
       createdTimestampMs: this.serverConfig.data().createdTimestampMs,
-      version,
+      version: version.getPackageVersion(),
       accessKeyDataLimit: this.serverConfig.data().accessKeyDataLimit,
       portForNewAccessKeys: this.serverConfig.data().portForNewAccessKeys,
       hostnameForAccessKeys: this.serverConfig.data().hostname,
+      experimental: this.serverConfig.data().experimental,
     });
     next();
   }
@@ -310,28 +360,85 @@ export class ShadowsocksManagerService {
     return next();
   }
 
+  private async createAccessKeyFromRequest(req: RequestType, id?: string): Promise<AccessKeyJson> {
+    try {
+      const encryptionMethod = validateStringParam(req.params.method || '', 'encryptionMethod');
+      const name = validateStringParam(req.params.name || '', 'name');
+      const dataLimit = validateDataLimit(req.params.limit);
+      const password = validateStringParam(req.params.password, 'password');
+      const portNumber = validateNumberParam(req.params.port, 'port');
+
+      const accessKeyJson = accessKeyToApiJson(
+        await this.accessKeys.createNewAccessKey({
+          encryptionMethod,
+          id,
+          name,
+          dataLimit,
+          password,
+          portNumber,
+        })
+      );
+      return accessKeyJson;
+    } catch (error) {
+      logging.error(error);
+      if (error instanceof errors.InvalidCipher || error instanceof errors.InvalidPortNumber) {
+        throw new restifyErrors.InvalidArgumentError({statusCode: 400}, error.message);
+      } else if (
+        error instanceof errors.PortUnavailable ||
+        error instanceof errors.PasswordConflict
+      ) {
+        throw new restifyErrors.ConflictError(error.message);
+      }
+      throw error;
+    }
+  }
+
   // Creates a new access key
-  public async createNewAccessKey(req: RequestType, res: ResponseType, next: restify.Next): Promise<void> {
+  public async createNewAccessKey(
+    req: RequestType,
+    res: ResponseType,
+    next: restify.Next
+  ): Promise<void> {
     try {
       logging.debug(`createNewAccessKey request ${JSON.stringify(req.params)}`);
-      let encryptionMethod = req.params.method;
-      if (!encryptionMethod) {
-        encryptionMethod = '';
+      if (req.params.id) {
+        return next(
+          new restifyErrors.InvalidArgumentError({statusCode: 400}, 'Parameter `id` is not allowed')
+        );
       }
-      if (typeof encryptionMethod !== 'string') {
-        return next(new restifyErrors.InvalidArgumentError(
-            {statusCode: 400},
-            `Expected a string encryptionMethod, instead got ${encryptionMethod} of type ${
-                typeof encryptionMethod}`));
-      }
-      const accessKeyJson = accessKeyToApiJson(await this.accessKeys.createNewAccessKey(encryptionMethod));
+      const accessKeyJson = await this.createAccessKeyFromRequest(req);
       res.send(201, accessKeyJson);
       logging.debug(`createNewAccessKey response ${JSON.stringify(accessKeyJson)}`);
       return next();
-    } catch(error) {
+    } catch (error) {
       logging.error(error);
-      if (error instanceof errors.InvalidCipher) {
-        return next(new restifyErrors.InvalidArgumentError({statusCode: 400}, error.message));
+      if (error instanceof restifyErrors.HttpError) {
+        return next(error);
+      }
+      return next(new restifyErrors.InternalServerError());
+    }
+  }
+
+  // Creates an access key with a specific identifier
+  public async createAccessKey(
+    req: RequestType,
+    res: ResponseType,
+    next: restify.Next
+  ): Promise<void> {
+    try {
+      logging.debug(`createAccessKey request ${JSON.stringify(req.params)}`);
+      const accessKeyId = validateAccessKeyId(req.params.id);
+      const accessKeyJson = await this.createAccessKeyFromRequest(req, accessKeyId);
+      res.send(201, accessKeyJson);
+      logging.debug(`createAccessKey response ${JSON.stringify(accessKeyJson)}`);
+      return next();
+    } catch (error) {
+      logging.error(error);
+      if (error instanceof errors.AccessKeyConflict) {
+        return next(new restifyErrors.ConflictError(error.message));
+      }
+      if (error instanceof restifyErrors.HttpError) {
+        return next(error);
       }
       return next(new restifyErrors.InternalServerError());
     }
@@ -345,17 +452,10 @@ export class ShadowsocksManagerService {
   ): Promise<void> {
     try {
       logging.debug(`setPortForNewAccessKeys request ${JSON.stringify(req.params)}`);
-      const port = req.params.port;
-      if (!port) {
+      const port = validateNumberParam(req.params.port, 'port');
+      if (port === undefined) {
         return next(
           new restifyErrors.MissingParameterError({statusCode: 400}, 'Parameter `port` is missing')
-        );
-      } else if (typeof port !== 'number') {
-        return next(
-          new restifyErrors.InvalidArgumentError(
-            {statusCode: 400},
-            `Expected a numeric port, instead got ${port} of type ${typeof port}`
-          )
         );
       }
       await this.accessKeys.setPortForNewAccessKeys(port);
@@ -369,6 +469,8 @@ export class ShadowsocksManagerService {
         return next(new restifyErrors.InvalidArgumentError({statusCode: 400}, error.message));
       } else if (error instanceof errors.PortUnavailable) {
         return next(new restifyErrors.ConflictError(error.message));
+      } else if (error instanceof restifyErrors.HttpError) {
+        return next(error);
       }
       return next(new restifyErrors.InternalServerError(error));
     }
@@ -474,10 +576,7 @@ export class ShadowsocksManagerService {
       return next();
     } catch (error) {
       logging.error(error);
-      if (
-        error instanceof restifyErrors.InvalidArgumentError ||
-        error instanceof restifyErrors.MissingParameterError
-      ) {
+      if (error instanceof restifyErrors.HttpError) {
         return next(error);
       }
       return next(new restifyErrors.InternalServerError());
@@ -535,7 +634,7 @@ export class ShadowsocksManagerService {
       return next(
         new restifyErrors.InvalidArgumentError(
           {statusCode: 400},
-          'Parameter `hours` must be an integer'
+          'Parameter `metricsEnabled` must be a boolean'
         )
       );
     }
@@ -546,5 +645,38 @@ export class ShadowsocksManagerService {
     }
     res.send(HttpSuccess.NO_CONTENT);
     next();
+  }
+
+  public enableAsnMetrics(req: RequestType, res: ResponseType, next: restify.Next): void {
+    try {
+      logging.debug(`enableAsnMetrics request ${JSON.stringify(req.params)}`);
+      const asnMetricsEnabled = req.params.asnMetricsEnabled;
+      if (asnMetricsEnabled === undefined || asnMetricsEnabled === null) {
+        return next(
+          new restifyErrors.MissingParameterError(
+            {statusCode: 400},
+            'Parameter `asnMetricsEnabled` is missing'
+          )
+        );
+      } else if (typeof asnMetricsEnabled !== 'boolean') {
+        return next(
+          new restifyErrors.InvalidArgumentError(
+            {statusCode: 400},
+            'Parameter `asnMetricsEnabled` must be a boolean'
+          )
+        );
+      }
+      this.shadowsocksServer.enableAsnMetrics(asnMetricsEnabled);
+      if (this.serverConfig.data().experimental === undefined) {
+        this.serverConfig.data().experimental = {};
+      }
+      this.serverConfig.data().experimental.asnMetricsEnabled = asnMetricsEnabled;
+      this.serverConfig.write();
+      res.send(HttpSuccess.NO_CONTENT);
+      return next();
+    } catch (error) {
+      logging.error(error);
+      return next(new restifyErrors.InternalServerError());
+    }
   }
 }

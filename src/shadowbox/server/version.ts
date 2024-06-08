@@ -1,4 +1,4 @@
-// Copyright 2018 The Outline Authors
+// Copyright 2024 The Outline Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,18 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Parameters required to identify and authenticate connections to a Shadowsocks server.
-export interface ShadowsocksAccessKey {
-  id: string;
-  port: number;
-  cipher: string;
-  secret: string;
-}
+// Injected by WebPack with webpack.DefinePlugin. 
+declare const __VERSION__: string;
 
-export interface ShadowsocksServer {
-  // Annotates the Prometheus data metrics with ASN.
-  enableAsnMetrics(enable: boolean);
-
-  // Updates the server to accept only the given access keys.
-  update(keys: ShadowsocksAccessKey[]): Promise<void>;
+export function getPackageVersion(): string {
+    try {
+        return __VERSION__;
+    } catch {
+        // Catch the ReferenceError if __VERSION__ is not injected.
+        return "dev"
+    }
 }
