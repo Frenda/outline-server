@@ -89,7 +89,7 @@ The Outline Server provides a REST API for access key management. If you know th
 
    - **Deployed with the Outline Manager:** Check the "Settings" tab.
 
-   - **Local Deployments from Source:** `https://[::]:8081/TestApiPrefix`
+   - **Local Deployments from Source:** The `apiUrl` is simply `https://[::]:8081/TestApiPrefix`
 
 1. **API Examples:**
 
@@ -145,4 +145,4 @@ If your change includes new fields in the server config which are needed at serv
 
 - **Delete Existing Config:** `rm /tmp/outline/persisted-state/shadowbox_server_config.json`
 
-- **Manually Edit:** You'll need to edit the JSON string within [`src/shadowbox/docker/start.action.sh`](src/shadowbox/docker/start.action.sh).
+- **Manually Edit:** You'll need to edit the JSON string within [`src/shadowbox/Taskfile.yml`](src/shadowbox/Taskfile.yml).
